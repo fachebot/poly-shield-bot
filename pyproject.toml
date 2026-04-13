@@ -1,0 +1,26 @@
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[project]
+name = "poly-shield-bot"
+version = "0.1.0"
+description = "Polymarket automated stop-loss and take-profit CLI"
+readme = "README.md"
+requires-python = ">=3.11,<4.0"
+license = "MIT"
+authors = [{ name = "Poly Shield Bot" }]
+dependencies = ["py-clob-client>=0.34.6"]
+
+[project.scripts]
+poly-shield = "poly_shield.cli:main"
+
+[tool.poetry]
+packages = [{ include = "poly_shield", from = "src" }]
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=9.0.0,<10.0.0"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
