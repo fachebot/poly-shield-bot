@@ -142,3 +142,47 @@ def test_gateway_selects_highest_bid_from_order_book(monkeypatch) -> None:
     monkeypatch.setitem(gateway.__dict__, "_readonly_client", FakeClient)
 
     assert gateway.get_best_bid("token-1") == Decimal("0.062")
+
+
+def test_gateway_quote_snapshot_preserves_market_id(monkeypatch) -> None:
+    gateway = PolymarketGateway(make_credentials())
+
+    class FakeClient:
+        @staticmethod
+        def get_order_book(token_id: str):
+            return {
+                "market": "0xmarket-1",
+                "bids": [{"price": "0.62", "size": "20"}],
+                "asks": [{"price": "0.64", "size": "15"}],
+            }
+
+    monkeypatch.setitem(gateway.__dict__, "_readonly_client", FakeClient)
+
+    snapshot = gateway.get_quote_snapshot("token-1")
+
+    assert snapshot.market_id == "0xmarket-1"
+
+
+def test_gateway_reads_order_and_trade(monkeypatch) -> None:
+    gateway = PolymarketGateway(make_credentials())
+
+    class FakeTradingClient:
+        @staticmethod
+        def get_order(order_id: str):
+            return {"id": order_id, "associate_trades": ["trade-1"]}
+
+        @staticmethod
+        def get_trades(params):
+            assert params.id == "trade-1"
+            return [{"id": "trade-1", "status": "CONFIRMED"}]
+
+    class FakeBundle:
+        class TradeParams:
+            def __init__(self, id: str):
+                self.id = id
+
+    monkeypatch.setitem(gateway.__dict__, "_trading_client", FakeTradingClient)
+    monkeypatch.setitem(gateway.__dict__, "_bundle", FakeBundle)
+
+    assert gateway.get_order("order-1")["id"] == "order-1"
+    assert gateway.get_trade("trade-1")["status"] == "CONFIRMED"

@@ -2,7 +2,7 @@ import json
 from argparse import Namespace
 from decimal import Decimal
 
-from poly_shield.cli import _emit_watch_events, build_rules
+from poly_shield.cli import _emit_watch_events, build_rules, handle_tasks_add, handle_tasks_list
 from poly_shield.quotes import OrderBookLevel
 from poly_shield.rules import RuleKind
 from poly_shield.watcher import WatchEvent
@@ -54,3 +54,67 @@ def test_emit_watch_events_prints_top_of_book(capsys) -> None:
     assert payload["best_ask"] == "0.066"
     assert payload["top_bids"] == [{"price": "0.064", "size": "109.75"}]
     assert payload["top_asks"] == [{"price": "0.066", "size": "21.03"}]
+
+
+def test_handle_tasks_add_posts_serialized_rules(monkeypatch, capsys) -> None:
+    captured = {}
+
+    def fake_backend_request(*, api_url: str, method: str, path: str, payload=None):
+        captured["api_url"] = api_url
+        captured["method"] = method
+        captured["path"] = path
+        captured["payload"] = payload
+        return {"task_id": "task-1", "status": "active"}
+
+    monkeypatch.setattr("poly_shield.cli._backend_request", fake_backend_request)
+
+    args = Namespace(
+        api_url="http://127.0.0.1:8787",
+        token_id="token-1",
+        dry_run=True,
+        slippage_bps=Decimal("50"),
+        average_cost=Decimal("0.42"),
+        position_size=Decimal("100"),
+        breakeven_stop_ratio=Decimal("0.5"),
+        price_stop=None,
+        price_stop_ratio=None,
+        take_profit=Decimal("0.7"),
+        take_profit_ratio=Decimal("0.25"),
+        trailing_drawdown=None,
+        trailing_drawdown_ratio=None,
+        trailing_activation_price=None,
+    )
+
+    handle_tasks_add(args)
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload == {"task_id": "task-1", "status": "active"}
+    assert captured["method"] == "POST"
+    assert captured["path"] == "/tasks"
+    assert captured["payload"]["token_id"] == "token-1"
+    assert captured["payload"]["position_size"] == "100"
+    assert captured["payload"]["average_cost"] == "0.42"
+    assert [rule["kind"] for rule in captured["payload"]["rules"]] == [
+        "breakeven-stop",
+        "take-profit",
+    ]
+
+
+def test_handle_tasks_list_builds_query_string(monkeypatch, capsys) -> None:
+    captured = {}
+
+    def fake_backend_request(*, api_url: str, method: str, path: str, payload=None):
+        captured["api_url"] = api_url
+        captured["method"] = method
+        captured["path"] = path
+        captured["payload"] = payload
+        return [{"task_id": "task-1", "status": "active"}]
+
+    monkeypatch.setattr("poly_shield.cli._backend_request", fake_backend_request)
+
+    handle_tasks_list(Namespace(api_url="http://127.0.0.1:8787", status="active", all=False))
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload == [{"task_id": "task-1", "status": "active"}]
+    assert captured["method"] == "GET"
+    assert captured["path"] == "/tasks?status=active"

@@ -18,6 +18,7 @@ class OrderBookLevel:
 @dataclass(frozen=True)
 class QuoteSnapshot:
     """监控流程使用的盘口摘要，包含最优价和顶部若干档。"""
+    market_id: str | None = None
     best_bid: Decimal = ZERO
     best_ask: Decimal = ZERO
     top_bids: tuple[OrderBookLevel, ...] = field(default_factory=tuple)

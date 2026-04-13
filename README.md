@@ -16,12 +16,22 @@ Polymarket 自动止盈止损机器人。
 - `watch` 输出现在会带上 `best_ask`、`top_bids` 和 `top_asks`，方便直接对照网页盘口联调。
 - `positions` 命令：接官方 `GET /positions`，可自动列出账户当前全部持仓和均价，也支持按 token 过滤。
 - Polymarket CLOB 接入骨架：订单簿读取、条件 token 余额读取、FAK 市价卖出、heartbeat 接口封装。
+- 后端服务骨架：新增 FastAPI 服务、SQLite 任务仓储、任务状态与执行记录表。
+- 新的任务管理命令：CLI 已支持 `serve`、`tasks`、`records`，开始向“前端调后端”模式迁移。
+- 后端任务现在也支持手动保存 `position_size` / `average_cost` 覆盖值，在官方 positions 接口受限时仍可运行 active 任务。
+- 实时执行链路：后端已接上 Polymarket 市场 websocket，active 任务会按订阅到的行情事件驱动执行，并把规则状态和执行记录持久化。
+- 用户成交跟踪：后端已接入 user websocket，会把 bot 提交订单的 order/trade 生命周期继续写入执行记录，补齐 `matched -> confirmed/failed` 这条链路。
+- 重连恢复：market websocket 重连前会先拉一轮最新 order book snapshot；user websocket 重连前会对 tracked orders 做一次 REST 对账，尽量把断线期间漏掉的终态补回本地记录。
+- crash-safe 执行意图：真实下单前会先把 execution attempt 落成 prepared，再推进到 submitted / confirmed / failed；如果进程在中间异常退出，运行时重启后会把未完成 attempt 标成 needs-review，并自动暂停对应任务，避免“远端可能下单了，本地却没痕迹”。
+- 单实例运行时保护：后端 runtime 启动时会抢占 SQLite 里的 lease，同一时刻只允许一个 runtime 持有 active 任务执行权，避免双实例重复消费同一批任务。
+- 陈旧数据自动降级：如果 market websocket 或 user websocket 长时间没有新消息，运行时会把相关 active 任务自动暂停，并写入一条 system 类型记录，避免在陈旧行情或陈旧订单状态上继续执行。
 
 ## 当前限制
 
 - 当前环境下直接访问官方 `https://data-api.polymarket.com/positions` 会命中 `403 / error code: 1010`，更像是 Cloudflare/地理限制，不是本地解析代码错误。
 - 因为上面的限制，我已经把官方 positions 接口接进代码和测试，但没法在这个环境里完成真实在线验证。
-- Telegram Bot、分层梯子、任务持久化和重启恢复还没开始做。
+- Telegram Bot、网页前端、多用户权限系统还没开始做。
+- 用户 websocket 需要服务端可用的 API key/secret/passphrase；如果本地没有可用交易凭证，这条链路无法在线建立连接。
 - 真实卖单路径已经接上 py-clob-client，但还没做真实账户的小仓位联调。
 
 ## 安装
@@ -69,7 +79,37 @@ poetry lock
 查看命令帮助：
 
 ```bash
-poetry run poly-shield watch --help
+poetry run poly-shield --help
+```
+
+启动本地后端服务：
+
+```bash
+poetry run poly-shield serve
+```
+
+通过后端 API 创建任务：
+
+```bash
+poetry run poly-shield tasks add \
+	--token-id <TOKEN_ID> \
+	--position-size 100 \
+	--average-cost 0.42 \
+	--take-profit 0.68 \
+	--take-profit-ratio 0.25 \
+	--dry-run
+```
+
+列出当前任务：
+
+```bash
+poetry run poly-shield tasks list
+```
+
+查询执行记录：
+
+```bash
+poetry run poly-shield records --limit 20
 ```
 
 列出当前账户全部持仓：
@@ -139,7 +179,46 @@ poetry run poly-shield watch \
 
 换账号或换环境时，可以直接按 [docs/ACCEPTANCE_CHECKLIST.md](docs/ACCEPTANCE_CHECKLIST.md) 逐项验收。
 
+如果你要验证 CLI、后端服务、SQLite、market websocket 和 user websocket 这整条链路，而不只是单个命令是否能跑，见 [docs/INTEGRATION_TEST_PLAN.md](docs/INTEGRATION_TEST_PLAN.md)。
+
 止盈止损的详细参数说明、规则解释和示例，见 [docs/STOP_LOSS_TAKE_PROFIT_GUIDE.md](docs/STOP_LOSS_TAKE_PROFIT_GUIDE.md)。
+
+如果你现在想体验前后端拆分后的新链路，建议这样跑：
+
+1. 先执行 `poetry run poly-shield serve`
+2. 再用 `poetry run poly-shield tasks add ...` 创建任务
+3. 用 `poetry run poly-shield tasks list` 和 `poetry run poly-shield records` 查询状态和记录
+
+现在这条新链路已经能持久化任务和记录，并且 active 任务会由后端通过市场 websocket 自动执行；如果官方 positions 接口在你的环境里不可用，也可以在 `tasks add` 时直接写入 `--position-size` 和 `--average-cost`。原来的 `watch` 命令仍保留，适合单次联调和本地排错。
+
+如果任务是真实下单而不是 dry-run，后端还会在拿到 order id 之后自动订阅对应 market 的 user channel，把后续 `order` / `trade` 更新继续追加到 `records` 里。
+
+`GET /health` 现在也会返回 `last_market_message_at`、`last_user_message_at` 和 `stale_seconds`，方便你直接判断本地运行时数据是不是已经陈旧。
+
+## 后端可靠性语义
+
+后端 runtime 现在默认按“宁可暂停，也不要在状态不确定时继续卖”的思路处理真实下单：
+
+- 对真实下单任务，先写一条 execution attempt，再发单；发单成功后会继续推进 attempt 状态。
+- 如果真实下单返回里没有 order id，这次执行不会被当成“正常 matched”，而是会直接标成 needs-review，并暂停该任务，等你人工确认。
+- 如果 runtime 重启时发现数据库里还有 prepared 或 submitted 但未完成对账的 attempt，会优先恢复它们；无法确认终态的会被改成 needs-review，并把任务暂停。
+- user websocket 正常收到 confirmed / failed，或者重连后 REST 对账拿到终态，都会把 attempt 和 execution record 一起推进到终态。
+
+`GET /health` 里的 runtime 字段现在建议这样理解：
+
+- running：当前 runtime 主循环是否已启动。
+- runner_count：当前正在管理的 active 任务数量。
+- subscribed_token_ids：当前 market websocket 正在订阅的 token 列表。
+- tracked_order_count：当前仍在等待 user channel 或 REST 对账补终态的订单数。
+- subscribed_market_ids：当前 user websocket 正在订阅的 market 列表。
+- lease_owner_id / lease_expires_at：当前 runtime 持有的单实例 lease 信息；如果拿不到 lease，新的 runtime 会直接启动失败，而不是并发执行。
+- last_market_message_at：最近一次收到市场消息的时间；只有在当前确实存在 active token 订阅时这个字段才有意义，没有 active 任务时会回到 null。
+- last_user_message_at：最近一次收到用户订单更新的时间；只有在当前确实有 tracked orders 或 user market 订阅时这个字段才有意义，没有待跟踪订单时会回到 null。
+- stale_seconds.market：市场流距离最近一条消息过去了多久；仅在存在 market 订阅上下文时才会有值。
+- stale_seconds.user：用户流距离最近一条消息过去了多久；仅在存在 tracked order / user 订阅上下文时才会有值。
+- stale_seconds.max：当前所有有效 stale 秒数里的最大值；如果 market 和 user 两边都没有相关上下文，就是 null。
+
+默认阈值下，market stale 超过 15 秒、user stale 超过 30 秒时，runtime 会把受影响任务自动切到 paused，并在 records 里补一条 system 记录说明暂停原因。后续你可以先查 records，再决定是人工恢复、继续观测，还是直接删除任务。
 
 ## 开发校验
 
@@ -160,7 +239,13 @@ poetry run pytest tests/test_proxy.py
 - 规则单测通过。
 - watcher 状态机单测通过。
 - 官方 positions 响应解析单测通过。
+- 后端任务仓储、服务层和 API 单测通过。
+- websocket 市场流解析与 runtime 集成单测通过。
+- websocket user channel 解析与 runtime 订单跟踪单测通过。
+- websocket 重连后的 market snapshot 补拉、tracked order REST 对账和 health freshness 快照单测通过。
+- execution attempts、runtime lease、runtime 重启恢复和 stale 自动暂停单测通过。
 - CLI `watch --help` 可正常启动。
+- CLI `serve --help`、`tasks add --help` 可正常启动。
 - 使用公开订单簿的 `watch --dry-run --run-once` 已成功跑通一次。
 - 官方 positions CLI 在当前环境会被 `403 / 1010` 拦截，所以这条只完成了本地单测验证，没有完成在线实测。
 

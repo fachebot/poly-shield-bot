@@ -35,6 +35,7 @@ class _SdkBundle:
     BalanceAllowanceParams: Any
     AssetType: Any
     MarketOrderArgs: Any
+    TradeParams: Any
     OrderType: Any
     PolyApiException: Any
     SELL: Any
@@ -47,6 +48,7 @@ def _sdk() -> _SdkBundle:
     try:
         from py_clob_client.client import ClobClient
         from py_clob_client.clob_types import ApiCreds, BalanceAllowanceParams, MarketOrderArgs, OrderType
+        from py_clob_client.clob_types import TradeParams
         from py_clob_client.clob_types import AssetType
         from py_clob_client.exceptions import PolyApiException
         from py_clob_client.http_helpers import helpers as http_helpers
@@ -62,6 +64,7 @@ def _sdk() -> _SdkBundle:
         BalanceAllowanceParams=BalanceAllowanceParams,
         AssetType=AssetType,
         MarketOrderArgs=MarketOrderArgs,
+        TradeParams=TradeParams,
         OrderType=OrderType,
         PolyApiException=PolyApiException,
         SELL=SELL,
@@ -98,7 +101,8 @@ def _extract_first_level(book: Any, side: str) -> Any:
     side_multiplier = Decimal("1") if side == "bids" else Decimal("-1")
     return max(
         levels,
-        key=lambda level: _decimal_from_value(_extract_field(level, "price")) * side_multiplier,
+        key=lambda level: _decimal_from_value(
+            _extract_field(level, "price")) * side_multiplier,
     )
 
 
@@ -182,6 +186,7 @@ class PolymarketGateway:
             for level in _extract_sorted_levels(book, "asks")[:depth]
         )
         return QuoteSnapshot(
+            market_id=(str(_extract_field(book, "market") or "") or None),
             best_bid=bid_levels[0].price if bid_levels else ZERO,
             best_ask=ask_levels[0].price if ask_levels else ZERO,
             top_bids=bid_levels,
@@ -190,7 +195,8 @@ class PolymarketGateway:
 
     def get_best_bid(self, token_id: str) -> Decimal:
         """保留一个简化接口，供只需要买一价的逻辑直接调用。"""
-        best_level = _extract_first_level(self._get_order_book(token_id), "bids")
+        best_level = _extract_first_level(
+            self._get_order_book(token_id), "bids")
         if best_level is None:
             return ZERO
         return _decimal_from_value(_extract_field(best_level, "price"))
@@ -280,6 +286,54 @@ class PolymarketGateway:
             details=str(response),
         )
 
+    def get_user_channel_auth(self) -> dict[str, str]:
+        """返回 user websocket 订阅所需的 API 凭证。"""
+        if self.credentials.has_api_creds:
+            return {
+                "apiKey": self.credentials.api_key or "",
+                "secret": self.credentials.api_secret or "",
+                "passphrase": self.credentials.api_passphrase or "",
+            }
+        client = self._trading_client
+        creds = getattr(client, "creds", None)
+        if creds is None:
+            raise PolymarketConfigurationError(
+                "Polymarket trading client is missing API credentials for user websocket"
+            )
+        api_key = _extract_field(creds, "api_key", "apiKey")
+        api_secret = _extract_field(creds, "api_secret", "secret")
+        api_passphrase = _extract_field(creds, "api_passphrase", "passphrase")
+        if not api_key or not api_secret or not api_passphrase:
+            raise PolymarketConfigurationError(
+                "user websocket requires API key, secret, and passphrase"
+            )
+        return {
+            "apiKey": str(api_key),
+            "secret": str(api_secret),
+            "passphrase": str(api_passphrase),
+        }
+
+    def get_order(self, order_id: str) -> Any:
+        """读取单个订单详情。"""
+        try:
+            return self._trading_client.get_order(order_id)
+        except Exception as exc:  # pragma: no cover - depends on remote API
+            raise PolymarketRequestError(
+                f"failed to fetch order {order_id}: {exc}"
+            ) from exc
+
+    def get_trade(self, trade_id: str) -> Any | None:
+        """按 trade id 读取单条成交记录。"""
+        try:
+            trades = self._trading_client.get_trades(
+                self._bundle.TradeParams(id=trade_id)
+            )
+        except Exception as exc:  # pragma: no cover - depends on remote API
+            raise PolymarketRequestError(
+                f"failed to fetch trade {trade_id}: {exc}"
+            ) from exc
+        return trades[0] if trades else None
+
     def post_heartbeat(self, heartbeat_id: str | None = None) -> dict[str, Any]:
         try:
             return self._trading_client.post_heartbeat(heartbeat_id)
@@ -305,7 +359,8 @@ class PolymarketGateway:
             return self._bundle.http_helpers.get(url)
         except self._bundle.PolyApiException as exc:  # pragma: no cover - depends on remote API
             details = exc.error_msg
-            details_text = details if isinstance(details, str) else str(details)
+            details_text = details if isinstance(
+                details, str) else str(details)
             if exc.status_code == 403 and "1010" in details_text:
                 raise PolymarketRequestError(
                     "Polymarket data API blocked this request with Cloudflare/geoblock error 1010. "

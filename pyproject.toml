@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11,<4.0"
 license = "MIT"
 authors = [{ name = "Poly Shield Bot" }]
-dependencies = ["py-clob-client>=0.34.6"]
+dependencies = ["py-clob-client>=0.34.6", "fastapi (>=0.135.3,<0.136.0)", "uvicorn (>=0.44.0,<0.45.0)", "websockets (>=16.0,<17.0)"]
 
 [project.scripts]
 poly-shield = "poly_shield.cli:main"

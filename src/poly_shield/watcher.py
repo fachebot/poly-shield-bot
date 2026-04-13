@@ -14,6 +14,7 @@ from poly_shield.rules import ExitRule, PositionSnapshot, RuleKind, RuleState, T
 
 class QuoteReader(Protocol):
     """watch 流程依赖的最小盘口读取接口。"""
+
     def get_quote_snapshot(self, token_id: str) -> QuoteSnapshot: ...
 
 
@@ -46,6 +47,8 @@ class WatchEvent:
     rule_name: str
     status: str
     best_bid: Decimal
+    market_id: str | None = None
+    order_id: str | None = None
     best_ask: Decimal = ZERO
     top_bids: tuple[OrderBookLevel, ...] = field(default_factory=tuple)
     top_asks: tuple[OrderBookLevel, ...] = field(default_factory=tuple)
@@ -121,6 +124,7 @@ class Watcher:
             token_id=task.token_id,
             rule_name=rule.name,
             status=status,
+            market_id=quote.market_id,
             best_bid=quote.best_bid,
             best_ask=quote.best_ask,
             top_bids=quote.top_bids,
@@ -142,6 +146,8 @@ class Watcher:
             token_id=task.token_id,
             rule_name=rule.name,
             status=result.status,
+            market_id=quote.market_id,
+            order_id=result.order_id,
             best_bid=quote.best_bid,
             best_ask=quote.best_ask,
             top_bids=quote.top_bids,
