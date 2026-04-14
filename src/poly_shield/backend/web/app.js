@@ -14,6 +14,8 @@ const state = {
   timelineSortMode: "time",
   timelinePageSize: 20,
   timelineVisibleCount: 20,
+  activeListTab: "active",
+  archivedPositions: [],
 };
 
 const TIMELINE_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
@@ -26,7 +28,9 @@ const elements = {
   healthPanel: document.querySelector("#healthPanel"),
   lastSyncText: document.querySelector("#lastSyncText"),
   positionCount: document.querySelector("#positionCount"),
+  archivedCount: document.querySelector("#archivedCount"),
   positionList: document.querySelector("#positionList"),
+  archivedList: document.querySelector("#archivedList"),
   detailEmpty: document.querySelector("#detailEmpty"),
   detailView: document.querySelector("#detailView"),
   detailTitle: document.querySelector("#detailTitle"),
@@ -58,6 +62,16 @@ bootstrap();
 elements.refreshButton.addEventListener("click", () =>
   refreshDashboard({ keepSelection: true }),
 );
+
+document.querySelectorAll(".tab-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    state.activeListTab = btn.dataset.tab;
+    document
+      .querySelectorAll(".tab-btn")
+      .forEach((b) => b.classList.toggle("active", b.dataset.tab === state.activeListTab));
+    renderPositionList();
+  });
+});
 elements.createTaskForm.addEventListener("submit", handleTaskFormSubmit);
 elements.cancelEditButton.addEventListener("click", cancelEditMode);
 elements.historyFilterInput.addEventListener("input", (event) => {
@@ -290,12 +304,13 @@ function mergeFallbackPositionCards() {
   const knownTokens = new Set(
     state.positions.map((position) => position.token_id),
   );
+  state.archivedPositions = [];
   for (const task of state.tasks) {
     if (knownTokens.has(task.token_id)) {
       continue;
     }
     knownTokens.add(task.token_id);
-    state.positions.push({
+    const card = {
       token_id: task.token_id,
       size: task.position_size ?? "-",
       average_cost: task.average_cost ?? "-",
@@ -309,9 +324,33 @@ function mergeFallbackPositionCards() {
       slug: null,
       proxy_wallet: null,
       __fallback: true,
-    });
+    };
+    if (["active", "paused"].includes(task.status)) {
+      state.positions.push(card);
+    } else {
+      state.archivedPositions.push({
+        token_id: task.token_id,
+        size: task.position_size ?? "-",
+        average_cost: task.average_cost ?? "-",
+        current_price: "-",
+        current_value: "-",
+        cash_pnl: "-",
+        percent_pnl: "-",
+        outcome: null,
+        market: null,
+        title: task.title || `已归档 · ${shortToken(task.token_id)}`,
+        slug: null,
+        proxy_wallet: null,
+        __fallback: true,
+      });
+    }
   }
   state.positions.sort((left, right) =>
+    String(left.title || left.token_id).localeCompare(
+      String(right.title || right.token_id),
+    ),
+  );
+  state.archivedPositions.sort((left, right) =>
     String(left.title || left.token_id).localeCompare(
       String(right.title || right.token_id),
     ),
@@ -355,48 +394,92 @@ function renderHealthCard(label, value, tone) {
 }
 
 function renderPositionList() {
-  elements.positionCount.textContent = String(state.positions.length);
-  elements.positionList.innerHTML = "";
-  if (!state.positions.length) {
-    elements.positionList.innerHTML = `<div class="empty-note">还没有可展示的仓位或任务。</div>`;
-    return;
-  }
-  for (const position of state.positions) {
-    const taskSummary = summarizeTasks(position.token_id);
-    const node =
-      elements.positionItemTemplate.content.firstElementChild.cloneNode(true);
-    node.dataset.tokenId = position.token_id;
-    node.classList.toggle(
-      "selected",
-      position.token_id === state.selectedTokenId,
-    );
-    node.querySelector(".position-title").textContent =
-      position.title || position.market || shortToken(position.token_id);
-    node.querySelector(".position-subtitle").textContent = [
-      position.outcome,
-      shortToken(position.token_id),
-    ]
-      .filter(Boolean)
-      .join(" · ");
-    node.querySelector(".position-size").textContent = `仓位 ${position.size}`;
-    node.querySelector(".position-price").textContent =
-      `现价 ${formatPriceValue(position.current_price)}`;
-    node.querySelector(".status-pill").textContent = taskSummary.label;
-    node.querySelector(".status-pill").className =
-      `status-pill ${taskSummary.className}`;
-    node.addEventListener("click", () => {
-      state.focusedTimelineTaskId = null;
-      return loadDetail(position.token_id).catch((error) =>
-        showBanner(error.message || String(error), "error"),
+  if (state.activeListTab === "active") {
+    elements.positionList.classList.remove("hidden");
+    elements.archivedList.classList.add("hidden");
+    elements.positionCount.textContent = String(state.positions.length);
+    elements.positionList.innerHTML = "";
+    if (!state.positions.length) {
+      elements.positionList.innerHTML = `<div class="empty-note">还没有可展示的仓位或任务。</div>`;
+      return;
+    }
+    for (const position of state.positions) {
+      const taskSummary = summarizeTasks(position.token_id);
+      const node =
+        elements.positionItemTemplate.content.firstElementChild.cloneNode(true);
+      node.dataset.tokenId = position.token_id;
+      node.classList.toggle(
+        "selected",
+        position.token_id === state.selectedTokenId,
       );
-    });
-    elements.positionList.appendChild(node);
-  }
-  if (state.positionsUnavailable) {
-    showBanner(
-      `持仓接口暂不可用，当前使用任务兜底卡片。${state.positionsUnavailable}`,
-      "warn",
-    );
+      node.querySelector(".position-title").textContent =
+        position.title || position.market || shortToken(position.token_id);
+      node.querySelector(".position-subtitle").textContent = [
+        position.outcome,
+        shortToken(position.token_id),
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      node.querySelector(".position-size").textContent = `仓位 ${position.size}`;
+      node.querySelector(".position-price").textContent =
+        `现价 ${formatPriceValue(position.current_price)}`;
+      node.querySelector(".status-pill").textContent = taskSummary.label;
+      node.querySelector(".status-pill").className =
+        `status-pill ${taskSummary.className}`;
+      node.addEventListener("click", () => {
+        state.focusedTimelineTaskId = null;
+        return loadDetail(position.token_id).catch((error) =>
+          showBanner(error.message || String(error), "error"),
+        );
+      });
+      elements.positionList.appendChild(node);
+    }
+    if (state.positionsUnavailable) {
+      showBanner(
+        `持仓接口暂不可用，当前使用任务兜底卡片。${state.positionsUnavailable}`,
+        "warn",
+      );
+    }
+  } else {
+    elements.positionList.classList.add("hidden");
+    elements.archivedList.classList.remove("hidden");
+    elements.archivedCount.textContent = String(state.archivedPositions.length);
+    elements.archivedList.innerHTML = "";
+    if (!state.archivedPositions.length) {
+      elements.archivedList.innerHTML = `<div class="empty-note">暂无归档仓位。</div>`;
+      return;
+    }
+    for (const position of state.archivedPositions) {
+      const taskSummary = summarizeTasks(position.token_id);
+      const node =
+        elements.positionItemTemplate.content.firstElementChild.cloneNode(true);
+      node.dataset.tokenId = position.token_id;
+      node.classList.toggle(
+        "selected",
+        position.token_id === state.selectedTokenId,
+      );
+      node.querySelector(".position-title").textContent =
+        position.title || position.market || shortToken(position.token_id);
+      node.querySelector(".position-subtitle").textContent = [
+        position.outcome,
+        shortToken(position.token_id),
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      node.querySelector(".position-size").textContent = `仓位 ${position.size}`;
+      node.querySelector(".position-price").textContent =
+        `现价 ${formatPriceValue(position.current_price)}`;
+      node.querySelector(".status-pill").textContent = taskSummary.label;
+      node.querySelector(".status-pill").className =
+        `status-pill ${taskSummary.className}`;
+      node.addEventListener("click", () => {
+        state.focusedTimelineTaskId = null;
+        return loadDetail(position.token_id).catch((error) =>
+          showBanner(error.message || String(error), "error"),
+        );
+      });
+      elements.archivedList.appendChild(node);
+    }
   }
 }
 
@@ -421,7 +504,8 @@ function summarizeTasks(tokenId) {
 }
 
 function renderDetail(tokenId, tokenTasks, tokenRecords) {
-  const position = state.positions.find((item) => item.token_id === tokenId);
+  const position = state.positions.find((item) => item.token_id === tokenId)
+    || state.archivedPositions.find((item) => item.token_id === tokenId);
   if (!position) {
     renderEmptyDetail();
     return;

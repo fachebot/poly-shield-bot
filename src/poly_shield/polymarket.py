@@ -244,6 +244,20 @@ class PolymarketGateway:
     def get_position_size(self, token_id: str) -> Decimal:
         return self.get_position(token_id).size
 
+    def get_market_title(self, token_id: str) -> str | None:
+        """通过 Gamma API 根据 clob_token_id 查询市场标题（question）。"""
+        try:
+            base_url = "https://gamma-api.polymarket.com/markets/keyset"
+            params = urlencode({"clob_token_ids": [token_id], "limit": "1"}, doseq=True)
+            url = f"{base_url}?{params}"
+            response = self._bundle.http_helpers.get(url)
+            markets = response.get("markets", [])
+            if markets and markets[0].get("question"):
+                return markets[0]["question"]
+            return None
+        except Exception:
+            return None
+
     def get_balance_allowance(self, token_id: str) -> Decimal:
         """读取指定条件 token 的可卖余额。"""
         params = self._bundle.BalanceAllowanceParams(

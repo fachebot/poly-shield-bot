@@ -104,6 +104,7 @@ class TaskResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     rules: list[RuleResponse]
+    title: str | None = None
 
 
 class ExecutionRecordResponse(BaseModel):
@@ -338,6 +339,7 @@ def _serialize_task(task: ManagedTask, rule_states: dict[str, RuleState]) -> Tas
             task.average_cost),
         created_at=task.created_at,
         updated_at=task.updated_at,
+        title=task.title,
         rules=[
             RuleResponse(
                 name=rule.name,

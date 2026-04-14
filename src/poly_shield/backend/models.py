@@ -56,6 +56,7 @@ class ManagedTask:
     average_cost: Decimal | None
     created_at: datetime
     updated_at: datetime
+    title: str | None = None
 
 
 @dataclass(frozen=True)

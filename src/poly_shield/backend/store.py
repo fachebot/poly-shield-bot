@@ -55,6 +55,7 @@ class SQLiteTaskStore:
         average_cost: Decimal | None = None,
         status: TaskStatus = TaskStatus.ACTIVE,
         task_id: str | None = None,
+        title: str | None = None,
     ) -> ManagedTask:
         """写入一条新任务及其规则定义。"""
         created_at = utc_now()
@@ -70,6 +71,7 @@ class SQLiteTaskStore:
             average_cost=average_cost,
             created_at=created_at,
             updated_at=created_at,
+            title=title,
         )
         with self._connect() as connection:
             connection.execute(
@@ -83,8 +85,9 @@ class SQLiteTaskStore:
                     position_size,
                     average_cost,
                     created_at,
-                    updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    updated_at,
+                    title
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task.task_id,
@@ -98,6 +101,7 @@ class SQLiteTaskStore:
                         task.average_cost),
                     _to_iso(task.created_at),
                     _to_iso(task.updated_at),
+                    task.title,
                 ),
             )
             connection.executemany(
@@ -412,7 +416,7 @@ class SQLiteTaskStore:
         """查询任务列表。"""
         query = """
             SELECT task_id, token_id, status, dry_run, slippage_bps,
-                   position_size, average_cost, created_at, updated_at
+                   position_size, average_cost, created_at, updated_at, title
             FROM tasks
         """
         parameters: list[str] = []
@@ -688,7 +692,8 @@ class SQLiteTaskStore:
                     position_size TEXT,
                     average_cost TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    title TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS task_rules (
@@ -776,6 +781,9 @@ class SQLiteTaskStore:
             if "average_cost" not in columns:
                 connection.execute(
                     "ALTER TABLE tasks ADD COLUMN average_cost TEXT")
+            if "title" not in columns:
+                connection.execute(
+                    "ALTER TABLE tasks ADD COLUMN title TEXT")
             record_columns = {
                 row["name"]
                 for row in connection.execute("PRAGMA table_info(execution_records)").fetchall()
@@ -876,6 +884,7 @@ class SQLiteTaskStore:
             average_cost=_to_decimal(row["average_cost"]),
             created_at=_from_iso(row["created_at"]),
             updated_at=_from_iso(row["updated_at"]),
+            title=row["title"] if "title" in row.keys() else None,
         )
 
     def _load_rules(self, connection: sqlite3.Connection, task_id: str) -> list[ExitRule]:

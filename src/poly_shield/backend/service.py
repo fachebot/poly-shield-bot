@@ -63,11 +63,20 @@ class TaskService:
         position_size: Decimal | None = None,
         average_cost: Decimal | None = None,
         status: TaskStatus = TaskStatus.ACTIVE,
+        title: str | None = None,
     ) -> ManagedTask:
         """创建任务并在需要时加入 active 注册表。"""
         WatchTask(token_id=token_id, rules=rules, dry_run=dry_run)
         if status is TaskStatus.ACTIVE:
             self._ensure_token_available(token_id)
+        if title is None:
+            from poly_shield.polymarket import PolymarketGateway
+            from poly_shield.config import PolymarketCredentials
+            try:
+                gateway = PolymarketGateway(PolymarketCredentials.from_env())
+                title = gateway.get_market_title(token_id)
+            except Exception:
+                title = None
         task = self.store.create_task(
             token_id=token_id,
             rules=rules,
@@ -76,6 +85,7 @@ class TaskService:
             position_size=position_size,
             average_cost=average_cost,
             status=status,
+            title=title,
         )
         if task.status is TaskStatus.ACTIVE:
             self.active_tasks[task.task_id] = task

@@ -39,11 +39,18 @@
                 <div class="panel-header">
                     <div>
                         <p class="panel-kicker">首页</p>
-                        <h2>仓位列表</h2>
+                        <h2 id="positionPanelTitle">仓位列表</h2>
                     </div>
                     <span id="positionCount" class="count-chip">0</span>
                 </div>
+                <div class="list-tabs">
+                    <button class="tab-btn active" data-tab="active">仓位列表</button>
+                    <button class="tab-btn" data-tab="archived">
+                        归档仓位 <span id="archivedCount" class="count-chip">0</span>
+                    </button>
+                </div>
                 <div id="positionList" class="position-list"></div>
+                <div id="archivedList" class="position-list hidden"></div>
             </section>
 
             <section class="panel panel-detail">
