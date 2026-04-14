@@ -40,6 +40,7 @@ def test_gateway_parses_positions_from_official_data_api(monkeypatch) -> None:
                 "percentPnl": 8.5,
                 "curPrice": 0.48,
                 "title": "Example Market",
+                "eventSlug": "example-event",
                 "slug": "example-market",
                 "outcome": "Yes",
             }
@@ -53,6 +54,7 @@ def test_gateway_parses_positions_from_official_data_api(monkeypatch) -> None:
     assert positions[0].average_cost == Decimal("0.44")
     assert positions[0].current_price == Decimal("0.48")
     assert positions[0].market == "0xmarket"
+    assert positions[0].event_slug == "example-event"
 
 
 def test_gateway_position_provider_uses_official_average_cost(monkeypatch) -> None:

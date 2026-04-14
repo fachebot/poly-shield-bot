@@ -72,6 +72,87 @@ class IdleUserStream:
         await stop_event.wait()
 
 
+def test_managed_task_runner_does_not_persist_waiting_records(tmp_path) -> None:
+    service = TaskService.from_db_path(tmp_path / "poly-shield.db")
+    task = service.create_task(
+        token_id="token-waiting",
+        rules=(
+            ExitRule(
+                kind=RuleKind.TAKE_PROFIT,
+                sell_size=Decimal("25"),
+                trigger_price=Decimal("0.90"),
+            ),
+        ),
+        dry_run=True,
+        slippage_bps=Decimal("50"),
+    )
+    runner = ManagedTaskRunner(
+        service=service,
+        task=task,
+        position_provider=ManualPositionProvider(
+            size=Decimal("100"), average_cost=Decimal("0.40")),
+        executor=ExitExecutor(gateway=FakeSellGateway(), slippage_bps=Decimal("50")),
+    )
+
+    events = runner.process_quote(
+        QuoteSnapshot(
+            best_bid=Decimal("0.71"),
+            best_ask=Decimal("0.72"),
+            top_bids=(OrderBookLevel(price=Decimal("0.71"), size=Decimal("100")),),
+            top_asks=(OrderBookLevel(price=Decimal("0.72"), size=Decimal("40")),),
+        )
+    )
+
+    records = service.list_execution_records(task_id=task.task_id)
+    states = service.load_rule_states(task.task_id)
+
+    assert len(events) == 1
+    assert events[0].status == "waiting"
+    assert records == []
+    assert states["take-profit"].is_triggered is False
+
+
+def test_managed_task_runner_persists_only_first_dry_run_trigger_record(tmp_path) -> None:
+    service = TaskService.from_db_path(tmp_path / "poly-shield.db")
+    task = service.create_task(
+        token_id="token-dry-run",
+        rules=(
+            ExitRule(
+                kind=RuleKind.TAKE_PROFIT,
+                sell_size=Decimal("25"),
+                trigger_price=Decimal("0.70"),
+            ),
+        ),
+        dry_run=True,
+        slippage_bps=Decimal("50"),
+    )
+    runner = ManagedTaskRunner(
+        service=service,
+        task=task,
+        position_provider=ManualPositionProvider(
+            size=Decimal("100"), average_cost=Decimal("0.40")),
+        executor=ExitExecutor(gateway=FakeSellGateway(), slippage_bps=Decimal("50")),
+    )
+    quote = QuoteSnapshot(
+        best_bid=Decimal("0.71"),
+        best_ask=Decimal("0.72"),
+        top_bids=(OrderBookLevel(price=Decimal("0.71"), size=Decimal("100")),),
+        top_asks=(OrderBookLevel(price=Decimal("0.72"), size=Decimal("40")),),
+    )
+
+    first_events = runner.process_quote(quote)
+    second_events = runner.process_quote(quote)
+
+    records = service.list_execution_records(task_id=task.task_id)
+
+    assert len(first_events) == 1
+    assert len(second_events) == 1
+    assert first_events[0].status == "dry-run"
+    assert second_events[0].status == "dry-run"
+    assert len(records) == 1
+    assert records[0].status == "dry-run"
+
+
 def test_managed_task_runner_persists_records_and_completion(tmp_path) -> None:
     service = TaskService.from_db_path(tmp_path / "poly-shield.db")
     task = service.create_task(
@@ -79,7 +160,7 @@ def test_managed_task_runner_persists_records_and_completion(tmp_path) -> None:
         rules=(
             ExitRule(
                 kind=RuleKind.TAKE_PROFIT,
-                sell_ratio=Decimal("0.25"),
+                sell_size=Decimal("25"),
                 trigger_price=Decimal("0.70"),
             ),
         ),
@@ -127,7 +208,7 @@ async def test_managed_task_runtime_dispatches_quotes_to_active_tasks(tmp_path) 
         rules=(
             ExitRule(
                 kind=RuleKind.TAKE_PROFIT,
-                sell_ratio=Decimal("0.25"),
+                sell_size=Decimal("25"),
                 trigger_price=Decimal("0.70"),
             ),
         ),
@@ -181,7 +262,7 @@ async def test_managed_task_runtime_tracks_user_trade_updates(tmp_path) -> None:
         rules=(
             ExitRule(
                 kind=RuleKind.TAKE_PROFIT,
-                sell_ratio=Decimal("0.25"),
+                sell_size=Decimal("25"),
                 trigger_price=Decimal("0.70"),
             ),
         ),
@@ -258,7 +339,7 @@ async def test_managed_task_runtime_prefetches_quote_before_stream(tmp_path) -> 
         rules=(
             ExitRule(
                 kind=RuleKind.TAKE_PROFIT,
-                sell_ratio=Decimal("0.25"),
+                sell_size=Decimal("25"),
                 trigger_price=Decimal("0.90"),
             ),
         ),
@@ -316,7 +397,7 @@ async def test_managed_task_runtime_reconciles_tracked_orders_after_user_disconn
         rules=(
             ExitRule(
                 kind=RuleKind.TAKE_PROFIT,
-                sell_ratio=Decimal("0.25"),
+                sell_size=Decimal("25"),
                 trigger_price=Decimal("0.70"),
             ),
         ),
@@ -388,7 +469,7 @@ def test_build_default_task_runner_passes_manual_position_overrides(tmp_path, mo
         rules=(
             ExitRule(
                 kind=RuleKind.BREAKEVEN_STOP,
-                sell_ratio=Decimal("0.5"),
+                sell_size=Decimal("44"),
             ),
         ),
         dry_run=True,
@@ -453,7 +534,7 @@ async def test_runtime_pauses_task_when_market_data_stales(tmp_path) -> None:
     task = service.create_task(
         token_id="token-stale",
         rules=(
-            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_ratio=Decimal("0.25"), trigger_price=Decimal("0.90")),
+            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("25"), trigger_price=Decimal("0.90")),
         ),
         dry_run=True,
         slippage_bps=Decimal("50"),
@@ -490,7 +571,7 @@ async def test_runtime_restores_prepared_attempts_as_needing_review(tmp_path) ->
     task = service.create_task(
         token_id="token-prepared",
         rules=(
-            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_ratio=Decimal("0.25"), trigger_price=Decimal("0.70")),
+            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("25"), trigger_price=Decimal("0.70")),
         ),
         dry_run=False,
         slippage_bps=Decimal("50"),
@@ -537,7 +618,7 @@ async def test_runtime_pauses_task_when_user_updates_stale(tmp_path) -> None:
     task = service.create_task(
         token_id="token-user-stale",
         rules=(
-            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_ratio=Decimal("0.25"), trigger_price=Decimal("0.70")),
+            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("25"), trigger_price=Decimal("0.70")),
         ),
         dry_run=False,
         slippage_bps=Decimal("50"),

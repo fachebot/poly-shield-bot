@@ -6,12 +6,12 @@ Polymarket 自动止盈止损机器人。
 
 ## 当前已实现
 
-- 保本止损规则：买一价小于等于均价时触发，按比例卖出。
-- 指定价格止损：买一价小于等于目标价时触发，按比例卖出。
-- 指定价格止盈：买一价大于等于目标价时触发，按比例卖出。
-- 峰值回撤止盈：记录 watch 生命周期里的最高买一价，按设定回撤比例触发止盈，可选激活价。
-- 部分成交续卖语义：规则第一次触发后锁定目标卖出数量，后续只补卖剩余数量，避免重复按比例超卖。
-- 多条规则的可用仓位隔离：同一轮里前面的规则先占用仓位，后面的规则只按剩余可用仓位计算卖出比例，避免同轮超卖。
+- 保本止损规则：买一价小于等于均价时触发，按指定股数卖出。
+- 指定价格止损：买一价小于等于目标价时触发，按指定股数卖出。
+- 指定价格止盈：买一价大于等于目标价时触发，按指定股数卖出。
+- 峰值回撤止盈：记录 watch 生命周期里的最高买一价，按设定回撤比例触发止盈，可选激活价；触发后按指定股数卖出。
+- 部分成交续卖语义：规则第一次触发后锁定目标卖出数量，后续只补卖剩余数量，避免重复锁定导致超卖。
+- 多条规则的可用仓位隔离：同一轮里前面的规则先占用仓位，后面的规则只从剩余可用仓位里锁定卖出股数；如果目标大于可用仓位，会自动截断，避免同轮超卖。
 - `watch` 命令：支持常驻轮询、`--run-once` 单次执行和 `--dry-run` 只读演练。
 - `watch` 输出现在会带上 `best_ask`、`top_bids` 和 `top_asks`，方便直接对照网页盘口联调。
 - `positions` 命令：接官方 `GET /positions`，可自动列出账户当前全部持仓和均价，也支持按 token 过滤。
@@ -96,7 +96,7 @@ poetry run poly-shield tasks add \
 	--position-size 100 \
 	--average-cost 0.42 \
 	--take-profit 0.68 \
-	--take-profit-ratio 0.25 \
+	--take-profit-size 25 \
 	--dry-run
 ```
 
@@ -141,7 +141,7 @@ poetry run poly-shield watch \
 	--token-id <TOKEN_ID> \
 	--position-size 100 \
 	--price-stop 0.40 \
-	--price-stop-ratio 0.5 \
+	--price-stop-size 50 \
 	--dry-run \
 	--run-once
 ```
@@ -153,9 +153,9 @@ poetry run poly-shield watch \
 	--token-id <TOKEN_ID> \
 	--average-cost 0.42 \
 	--position-size 100 \
-	--breakeven-stop-ratio 0.5 \
+	--breakeven-stop-size 50 \
 	--take-profit 0.68 \
-	--take-profit-ratio 0.25 \
+	--take-profit-size 25 \
 	--dry-run
 ```
 
@@ -165,7 +165,7 @@ poetry run poly-shield watch \
 poetry run poly-shield watch \
 	--token-id <TOKEN_ID> \
 	--trailing-drawdown 0.10 \
-	--trailing-drawdown-ratio 0.50 \
+	--trailing-sell-size 50 \
 	--trailing-activation-price 0.65 \
 	--dry-run
 ```

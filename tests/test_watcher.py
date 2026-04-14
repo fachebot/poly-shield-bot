@@ -45,9 +45,9 @@ def test_watch_task_rejects_multiple_protective_stops() -> None:
             token_id="token-1",
             rules=(
                 ExitRule(kind=RuleKind.BREAKEVEN_STOP,
-                         sell_ratio=Decimal("0.25")),
-                ExitRule(kind=RuleKind.PRICE_STOP, sell_ratio=Decimal(
-                    "0.25"), trigger_price=Decimal("0.40")),
+                         sell_size=Decimal("25")),
+                ExitRule(kind=RuleKind.PRICE_STOP, sell_size=Decimal(
+                    "25"), trigger_price=Decimal("0.40")),
             ),
         )
 
@@ -61,7 +61,7 @@ def test_watcher_retries_only_remaining_size_after_partial_fill() -> None:
                       position_provider=provider, executor=executor)
     task = WatchTask(
         token_id="token-1",
-        rules=(ExitRule(kind=RuleKind.BREAKEVEN_STOP, sell_ratio=Decimal("0.25")),),
+        rules=(ExitRule(kind=RuleKind.BREAKEVEN_STOP, sell_size=Decimal("25")),),
         dry_run=False,
     )
 
@@ -85,8 +85,8 @@ def test_dry_run_keeps_locked_target_without_registering_fill() -> None:
     task = WatchTask(
         token_id="token-2",
         rules=(
-            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_ratio=Decimal(
-                "0.50"), trigger_price=Decimal("0.65")),
+            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal(
+                "25"), trigger_price=Decimal("0.65")),
         ),
         dry_run=True,
     )
@@ -110,8 +110,8 @@ def test_watch_event_includes_best_ask_and_top_of_book() -> None:
     task = WatchTask(
         token_id="token-top-book",
         rules=(
-            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_ratio=Decimal(
-                "0.50"), trigger_price=Decimal("0.65")),
+            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal(
+                "25"), trigger_price=Decimal("0.65")),
         ),
         dry_run=True,
     )
@@ -136,13 +136,13 @@ def test_watcher_reserves_remaining_size_between_multiple_take_profit_rules() ->
         rules=(
             ExitRule(
                 kind=RuleKind.TAKE_PROFIT,
-                sell_ratio=Decimal("0.60"),
+                sell_size=Decimal("60"),
                 trigger_price=Decimal("0.65"),
                 label="tp-1",
             ),
             ExitRule(
                 kind=RuleKind.TAKE_PROFIT,
-                sell_ratio=Decimal("0.50"),
+                sell_size=Decimal("50"),
                 trigger_price=Decimal("0.60"),
                 label="tp-2",
             ),
@@ -153,7 +153,7 @@ def test_watcher_reserves_remaining_size_between_multiple_take_profit_rules() ->
     events = watcher.run_cycle(task)
 
     assert events[0].requested_size == Decimal("60.00")
-    assert events[1].requested_size == Decimal("20.00")
+    assert events[1].requested_size == Decimal("40")
 
 
 def test_trailing_take_profit_dry_run_triggers_after_peak_drawdown() -> None:
@@ -168,7 +168,7 @@ def test_trailing_take_profit_dry_run_triggers_after_peak_drawdown() -> None:
         rules=(
             ExitRule(
                 kind=RuleKind.TRAILING_TAKE_PROFIT,
-                sell_ratio=Decimal("0.50"),
+                sell_size=Decimal("15"),
                 drawdown_ratio=Decimal("0.10"),
             ),
         ),

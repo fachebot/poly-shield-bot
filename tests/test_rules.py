@@ -15,7 +15,7 @@ def make_position(*, size: str = "100", average_cost: str = "0.42", best_bid: st
 
 
 def test_breakeven_stop_triggers_at_average_cost() -> None:
-    rule = ExitRule(kind=RuleKind.BREAKEVEN_STOP, sell_ratio=Decimal("0.25"))
+    rule = ExitRule(kind=RuleKind.BREAKEVEN_STOP, sell_size=Decimal("25"))
     state = RuleState()
 
     decision = evaluate_rule(rule, make_position(best_bid="0.42"), state)
@@ -29,7 +29,7 @@ def test_breakeven_stop_triggers_at_average_cost() -> None:
 def test_price_stop_waits_until_bid_crosses_down() -> None:
     rule = ExitRule(
         kind=RuleKind.PRICE_STOP,
-        sell_ratio=Decimal("0.50"),
+        sell_size=Decimal("50"),
         trigger_price=Decimal("0.44"),
     )
     state = RuleState()
@@ -44,7 +44,7 @@ def test_price_stop_waits_until_bid_crosses_down() -> None:
 def test_take_profit_triggers_at_or_above_target() -> None:
     rule = ExitRule(
         kind=RuleKind.TAKE_PROFIT,
-        sell_ratio=Decimal("0.60"),
+        sell_size=Decimal("60"),
         trigger_price=Decimal("0.65"),
     )
     state = RuleState()
@@ -59,7 +59,7 @@ def test_take_profit_triggers_at_or_above_target() -> None:
 def test_trailing_take_profit_triggers_after_peak_drawdown() -> None:
     rule = ExitRule(
         kind=RuleKind.TRAILING_TAKE_PROFIT,
-        sell_ratio=Decimal("0.40"),
+        sell_size=Decimal("40"),
         drawdown_ratio=Decimal("0.10"),
     )
     state = RuleState()
@@ -77,7 +77,7 @@ def test_trailing_take_profit_triggers_after_peak_drawdown() -> None:
 def test_trailing_take_profit_waits_for_activation_price() -> None:
     rule = ExitRule(
         kind=RuleKind.TRAILING_TAKE_PROFIT,
-        sell_ratio=Decimal("0.50"),
+        sell_size=Decimal("50"),
         trigger_price=Decimal("0.60"),
         drawdown_ratio=Decimal("0.10"),
     )
@@ -97,11 +97,11 @@ def test_trailing_take_profit_waits_for_activation_price() -> None:
 def test_exit_rule_validates_required_drawdown_ratio() -> None:
     with pytest.raises(ValueError, match="requires a drawdown_ratio"):
         ExitRule(kind=RuleKind.TRAILING_TAKE_PROFIT,
-                 sell_ratio=Decimal("0.50"))
+                 sell_size=Decimal("50"))
 
 
 def test_rule_locks_target_on_first_trigger_and_keeps_it_after_partial_fill() -> None:
-    rule = ExitRule(kind=RuleKind.BREAKEVEN_STOP, sell_ratio=Decimal("0.25"))
+    rule = ExitRule(kind=RuleKind.BREAKEVEN_STOP, sell_size=Decimal("25"))
     state = RuleState()
     position = make_position(best_bid="0.42")
 
@@ -117,7 +117,7 @@ def test_rule_locks_target_on_first_trigger_and_keeps_it_after_partial_fill() ->
 
 
 def test_rule_marks_complete_when_target_is_fully_filled() -> None:
-    rule = ExitRule(kind=RuleKind.BREAKEVEN_STOP, sell_ratio=Decimal("0.10"))
+    rule = ExitRule(kind=RuleKind.BREAKEVEN_STOP, sell_size=Decimal("10"))
     state = RuleState()
     evaluate_rule(rule, make_position(best_bid="0.42"), state)
     state.register_fill(Decimal("10"))
@@ -131,13 +131,29 @@ def test_rule_marks_complete_when_target_is_fully_filled() -> None:
 
 def test_exit_rule_validates_required_trigger_price() -> None:
     with pytest.raises(ValueError, match="requires a trigger_price"):
-        ExitRule(kind=RuleKind.TAKE_PROFIT, sell_ratio=Decimal("0.50"))
+        ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("50"))
 
 
 def test_register_fill_rejects_overfills() -> None:
-    rule = ExitRule(kind=RuleKind.BREAKEVEN_STOP, sell_ratio=Decimal("0.10"))
+    rule = ExitRule(kind=RuleKind.BREAKEVEN_STOP, sell_size=Decimal("10"))
     state = RuleState()
     evaluate_rule(rule, make_position(best_bid="0.42"), state)
 
     with pytest.raises(ValueError, match="exceeds locked target size"):
         state.register_fill(Decimal("10.01"))
+
+
+def test_rule_clamps_sell_size_to_available_size_when_triggered() -> None:
+    rule = ExitRule(kind=RuleKind.BREAKEVEN_STOP, sell_size=Decimal("120"))
+    state = RuleState()
+
+    decision = evaluate_rule(
+        rule,
+        make_position(size="100", best_bid="0.42"),
+        state,
+        available_size=Decimal("80"),
+    )
+
+    assert decision.triggered is True
+    assert decision.target_size == Decimal("80")
+    assert decision.remaining_size == Decimal("80")

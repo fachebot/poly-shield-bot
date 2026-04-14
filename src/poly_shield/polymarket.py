@@ -391,6 +391,13 @@ class PolymarketGateway:
             outcome=_extract_field(payload, "outcome"),
             market=_extract_field(payload, "conditionId"),
             title=_extract_field(payload, "title"),
+            event_slug=_extract_field(
+                payload,
+                "eventSlug",
+                "event_slug",
+                "seriesSlug",
+                "series_slug",
+            ),
             slug=_extract_field(payload, "slug"),
             proxy_wallet=_extract_field(payload, "proxyWallet"),
         )

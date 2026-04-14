@@ -46,14 +46,14 @@ class PositionSnapshot:
 class ExitRule:
     """单条退出规则定义。"""
     kind: RuleKind
-    sell_ratio: Decimal
+    sell_size: Decimal
     trigger_price: Decimal | None = None
     drawdown_ratio: Decimal | None = None
     label: str | None = None
 
     def __post_init__(self) -> None:
-        if self.sell_ratio <= ZERO or self.sell_ratio > ONE:
-            raise ValueError("sell_ratio must be in the range (0, 1]")
+        if self.sell_size <= ZERO:
+            raise ValueError("sell_size must be greater than zero")
         expects_trigger = self.kind in {
             RuleKind.PRICE_STOP, RuleKind.TAKE_PROFIT}
         expects_drawdown = self.kind is RuleKind.TRAILING_TAKE_PROFIT
@@ -185,10 +185,7 @@ def locked_target_size(rule: ExitRule, available_size: Decimal | str | int | flo
     size = _as_decimal(available_size)
     if size <= ZERO:
         raise ValueError("available_size must be greater than zero")
-    target = size * rule.sell_ratio
-    if target > size:
-        return size
-    return target
+    return rule.sell_size if rule.sell_size <= size else size
 
 
 def evaluate_rule(

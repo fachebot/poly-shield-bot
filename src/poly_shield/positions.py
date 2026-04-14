@@ -22,6 +22,7 @@ class PositionRecord:
     outcome: str | None = None
     market: str | None = None
     title: str | None = None
+    event_slug: str | None = None
     slug: str | None = None
     proxy_wallet: str | None = None
 

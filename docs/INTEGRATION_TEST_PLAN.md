@@ -102,7 +102,7 @@ poetry run poly-shield watch \
   --position-size 100 \
   --average-cost 0.42 \
   --take-profit <低于当前best_bid的价格> \
-  --take-profit-ratio 0.25 \
+  --take-profit-size 25 \
   --dry-run \
   --run-once
 ```
@@ -112,7 +112,7 @@ poetry run poly-shield watch \
 - `positions` 能返回数组，或者明确报出 `403 / 1010` 网络限制
 - `watch` 输出包含 `best_bid`、`best_ask`、`top_bids`、`top_asks`
 - `watch` 输出状态为 `dry-run`
-- `requested_size` 等于 `position_size * take-profit-ratio`
+- `requested_size` 等于配置的 `take-profit-size`
 
 说明：
 
@@ -149,7 +149,7 @@ poetry run poly-shield tasks add \
   --position-size 100 \
   --average-cost 0.42 \
   --take-profit <低于当前best_bid的价格> \
-  --take-profit-ratio 0.25 \
+  --take-profit-size 25 \
   --dry-run
 ```
 
@@ -185,7 +185,7 @@ poetry run poly-shield tasks add \
   --position-size 100 \
   --average-cost 0.42 \
   --take-profit <低于当前best_bid的价格> \
-  --take-profit-ratio 0.25 \
+  --take-profit-size 25 \
   --dry-run
 ```
 
@@ -253,7 +253,7 @@ Invoke-RestMethod http://127.0.0.1:8787/health | ConvertTo-Json -Depth 6
 ```bash
 poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
-  --breakeven-stop-ratio 0.5 \
+  --breakeven-stop-size 50 \
   --dry-run \
   --run-once
 ```
@@ -262,7 +262,7 @@ poetry run poly-shield watch \
 
 - 不手动传 `--position-size` 和 `--average-cost` 也能成功运行
 - 输出里的 `trigger_price` 等于当前持仓均价
-- `requested_size` 与持仓数量乘卖出比例一致
+- `requested_size` 等于配置的 `breakeven-stop-size`；如果大于当前可用仓位则会被截断
 
 如果命中 `403 / 1010`：
 
@@ -280,7 +280,7 @@ poetry run poly-shield tasks add \
   --position-size <小仓位> \
   --average-cost <真实均价或保守估计> \
   --take-profit <低于当前best_bid的价格> \
-  --take-profit-ratio 0.1
+  --take-profit-size 10
 ```
 
 创建后持续查询：

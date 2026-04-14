@@ -106,7 +106,7 @@ class SQLiteTaskStore:
                     task_id,
                     rule_name,
                     rule_kind,
-                    sell_ratio,
+                    sell_size,
                     trigger_price,
                     drawdown_ratio,
                     label
@@ -117,7 +117,7 @@ class SQLiteTaskStore:
                         task.task_id,
                         rule.name,
                         rule.kind.value,
-                        str(rule.sell_ratio),
+                        str(rule.sell_size),
                         None if rule.trigger_price is None else str(
                             rule.trigger_price),
                         None if rule.drawdown_ratio is None else str(
@@ -402,7 +402,13 @@ class SQLiteTaskStore:
                 return None
             return self._build_task(connection, row)
 
-    def list_tasks(self, *, status: TaskStatus | None = None, include_deleted: bool = False) -> list[ManagedTask]:
+    def list_tasks(
+        self,
+        *,
+        status: TaskStatus | None = None,
+        include_deleted: bool = False,
+        token_id: str | None = None,
+    ) -> list[ManagedTask]:
         """查询任务列表。"""
         query = """
             SELECT task_id, token_id, status, dry_run, slippage_bps,
@@ -411,6 +417,9 @@ class SQLiteTaskStore:
         """
         parameters: list[str] = []
         clauses: list[str] = []
+        if token_id is not None:
+            clauses.append("token_id = ?")
+            parameters.append(token_id)
         if status is not None:
             clauses.append("status = ?")
             parameters.append(status.value)
@@ -438,6 +447,71 @@ class SQLiteTaskStore:
             )
             if cursor.rowcount != 1:
                 raise KeyError(f"unknown task_id: {task_id}")
+        task = self.get_task(task_id)
+        assert task is not None
+        return task
+
+    def update_task(
+        self,
+        task_id: str,
+        *,
+        rules: tuple[ExitRule, ...],
+        dry_run: bool,
+        slippage_bps: Decimal,
+        position_size: Decimal | None = None,
+        average_cost: Decimal | None = None,
+    ) -> ManagedTask:
+        """替换任务定义，并清空旧的规则运行态。"""
+        updated_at = utc_now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE tasks
+                SET dry_run = ?,
+                    slippage_bps = ?,
+                    position_size = ?,
+                    average_cost = ?,
+                    updated_at = ?
+                WHERE task_id = ?
+                """,
+                (
+                    int(dry_run),
+                    str(slippage_bps),
+                    None if position_size is None else str(position_size),
+                    None if average_cost is None else str(average_cost),
+                    _to_iso(updated_at),
+                    task_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"unknown task_id: {task_id}")
+            connection.execute("DELETE FROM task_rules WHERE task_id = ?", (task_id,))
+            connection.executemany(
+                """
+                INSERT INTO task_rules (
+                    task_id,
+                    rule_name,
+                    rule_kind,
+                    sell_size,
+                    trigger_price,
+                    drawdown_ratio,
+                    label
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        task_id,
+                        rule.name,
+                        rule.kind.value,
+                        str(rule.sell_size),
+                        None if rule.trigger_price is None else str(rule.trigger_price),
+                        None if rule.drawdown_ratio is None else str(rule.drawdown_ratio),
+                        rule.label,
+                    )
+                    for rule in rules
+                ],
+            )
+            connection.execute("DELETE FROM task_states WHERE task_id = ?", (task_id,))
         task = self.get_task(task_id)
         assert task is not None
         return task
@@ -551,7 +625,13 @@ class SQLiteTaskStore:
             )
         return record
 
-    def list_execution_records(self, *, task_id: str | None = None, limit: int = 100) -> list[ExecutionRecord]:
+    def list_execution_records(
+        self,
+        *,
+        task_id: str | None = None,
+        token_id: str | None = None,
+        limit: int = 100,
+    ) -> list[ExecutionRecord]:
         """查询执行审计记录。"""
         query = """
              SELECT record_id, task_id, token_id, rule_name, event_type, status,
@@ -560,9 +640,15 @@ class SQLiteTaskStore:
             FROM execution_records
         """
         parameters: list[object] = []
+        clauses: list[str] = []
         if task_id is not None:
-            query += " WHERE task_id = ?"
+            clauses.append("task_id = ?")
             parameters.append(task_id)
+        if token_id is not None:
+            clauses.append("token_id = ?")
+            parameters.append(token_id)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY created_at DESC LIMIT ?"
         parameters.append(limit)
         with self._connect() as connection:
@@ -609,7 +695,7 @@ class SQLiteTaskStore:
                     task_id TEXT NOT NULL,
                     rule_name TEXT NOT NULL,
                     rule_kind TEXT NOT NULL,
-                    sell_ratio TEXT NOT NULL,
+                    sell_size TEXT NOT NULL,
                     trigger_price TEXT,
                     drawdown_ratio TEXT,
                     label TEXT,
@@ -795,7 +881,7 @@ class SQLiteTaskStore:
     def _load_rules(self, connection: sqlite3.Connection, task_id: str) -> list[ExitRule]:
         rows = connection.execute(
             """
-            SELECT rule_name, rule_kind, sell_ratio, trigger_price, drawdown_ratio, label
+            SELECT rule_name, rule_kind, sell_size, trigger_price, drawdown_ratio, label
             FROM task_rules
             WHERE task_id = ?
             ORDER BY rowid ASC
@@ -805,7 +891,7 @@ class SQLiteTaskStore:
         return [
             ExitRule(
                 kind=RuleKind(row["rule_kind"]),
-                sell_ratio=Decimal(row["sell_ratio"]),
+                sell_size=Decimal(row["sell_size"]),
                 trigger_price=_to_decimal(row["trigger_price"]),
                 drawdown_ratio=_to_decimal(row["drawdown_ratio"]),
                 label=row["label"],

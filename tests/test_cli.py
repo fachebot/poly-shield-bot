@@ -11,13 +11,13 @@ from poly_shield.watcher import WatchEvent
 def make_watch_args(**overrides) -> Namespace:
     payload = {
         "average_cost": None,
-        "breakeven_stop_ratio": None,
+        "breakeven_stop_size": None,
         "price_stop": None,
-        "price_stop_ratio": None,
+        "price_stop_size": None,
         "take_profit": None,
-        "take_profit_ratio": None,
+        "take_profit_size": None,
         "trailing_drawdown": None,
-        "trailing_drawdown_ratio": None,
+        "trailing_sell_size": None,
         "trailing_activation_price": None,
     }
     payload.update(overrides)
@@ -25,11 +25,11 @@ def make_watch_args(**overrides) -> Namespace:
 
 
 def test_build_rules_allows_breakeven_stop_without_manual_average_cost() -> None:
-    rules = build_rules(make_watch_args(breakeven_stop_ratio=Decimal("0.25")))
+    rules = build_rules(make_watch_args(breakeven_stop_size=Decimal("25")))
 
     assert len(rules) == 1
     assert rules[0].kind is RuleKind.BREAKEVEN_STOP
-    assert rules[0].sell_ratio == Decimal("0.25")
+    assert rules[0].sell_size == Decimal("25")
 
 
 def test_emit_watch_events_prints_top_of_book(capsys) -> None:
@@ -75,13 +75,13 @@ def test_handle_tasks_add_posts_serialized_rules(monkeypatch, capsys) -> None:
         slippage_bps=Decimal("50"),
         average_cost=Decimal("0.42"),
         position_size=Decimal("100"),
-        breakeven_stop_ratio=Decimal("0.5"),
+        breakeven_stop_size=Decimal("50"),
         price_stop=None,
-        price_stop_ratio=None,
+        price_stop_size=None,
         take_profit=Decimal("0.7"),
-        take_profit_ratio=Decimal("0.25"),
+        take_profit_size=Decimal("25"),
         trailing_drawdown=None,
-        trailing_drawdown_ratio=None,
+        trailing_sell_size=None,
         trailing_activation_price=None,
     )
 

@@ -11,8 +11,8 @@ def test_sqlite_store_round_trips_task_definition(tmp_path) -> None:
     created = store.create_task(
         token_id="token-1",
         rules=(
-            ExitRule(kind=RuleKind.PRICE_STOP, sell_ratio=Decimal("0.5"), trigger_price=Decimal("0.40")),
-            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_ratio=Decimal("0.25"), trigger_price=Decimal("0.65"), label="tp-1"),
+            ExitRule(kind=RuleKind.PRICE_STOP, sell_size=Decimal("50"), trigger_price=Decimal("0.40")),
+            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("25"), trigger_price=Decimal("0.65"), label="tp-1"),
         ),
         dry_run=True,
         slippage_bps=Decimal("50"),
@@ -38,8 +38,8 @@ def test_sqlite_store_round_trips_rule_states(tmp_path) -> None:
     task = store.create_task(
         token_id="token-2",
         rules=(
-            ExitRule(kind=RuleKind.BREAKEVEN_STOP, sell_ratio=Decimal("0.5")),
-            ExitRule(kind=RuleKind.TRAILING_TAKE_PROFIT, sell_ratio=Decimal("0.25"), drawdown_ratio=Decimal("0.1")),
+            ExitRule(kind=RuleKind.BREAKEVEN_STOP, sell_size=Decimal("50")),
+            ExitRule(kind=RuleKind.TRAILING_TAKE_PROFIT, sell_size=Decimal("25"), drawdown_ratio=Decimal("0.1")),
         ),
         dry_run=False,
         slippage_bps=Decimal("75"),
@@ -72,7 +72,7 @@ def test_sqlite_store_tracks_status_changes_and_execution_records(tmp_path) -> N
     task = store.create_task(
         token_id="token-3",
         rules=(
-            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_ratio=Decimal("0.25"), trigger_price=Decimal("0.70")),
+            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("25"), trigger_price=Decimal("0.70")),
         ),
         dry_run=False,
         slippage_bps=Decimal("25"),
@@ -107,7 +107,7 @@ def test_sqlite_store_round_trips_execution_attempts_and_runtime_lease(tmp_path)
     task = store.create_task(
         token_id="token-4",
         rules=(
-            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_ratio=Decimal("0.25"), trigger_price=Decimal("0.70")),
+            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("25"), trigger_price=Decimal("0.70")),
         ),
         dry_run=False,
         slippage_bps=Decimal("25"),

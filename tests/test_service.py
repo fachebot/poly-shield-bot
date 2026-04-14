@@ -11,14 +11,14 @@ def test_task_service_restores_active_tasks_from_store(tmp_path) -> None:
     service = TaskService.from_db_path(tmp_path / "poly-shield.db")
     active = service.create_task(
         token_id="token-1",
-        rules=(ExitRule(kind=RuleKind.BREAKEVEN_STOP, sell_ratio=Decimal("0.5")),),
+        rules=(ExitRule(kind=RuleKind.BREAKEVEN_STOP, sell_size=Decimal("50")),),
         dry_run=True,
         slippage_bps=Decimal("50"),
         status=TaskStatus.ACTIVE,
     )
     service.create_task(
         token_id="token-2",
-        rules=(ExitRule(kind=RuleKind.TAKE_PROFIT, sell_ratio=Decimal("0.25"), trigger_price=Decimal("0.7")),),
+        rules=(ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("25"), trigger_price=Decimal("0.7")),),
         dry_run=True,
         slippage_bps=Decimal("50"),
         status=TaskStatus.PAUSED,
@@ -34,7 +34,7 @@ def test_task_service_rejects_duplicate_active_token(tmp_path) -> None:
     service = TaskService.from_db_path(tmp_path / "poly-shield.db")
     service.create_task(
         token_id="token-1",
-        rules=(ExitRule(kind=RuleKind.BREAKEVEN_STOP, sell_ratio=Decimal("0.5")),),
+        rules=(ExitRule(kind=RuleKind.BREAKEVEN_STOP, sell_size=Decimal("50")),),
         dry_run=True,
         slippage_bps=Decimal("50"),
     )
@@ -42,7 +42,7 @@ def test_task_service_rejects_duplicate_active_token(tmp_path) -> None:
     with pytest.raises(TaskConflictError, match="already has an active task"):
         service.create_task(
             token_id="token-1",
-            rules=(ExitRule(kind=RuleKind.TAKE_PROFIT, sell_ratio=Decimal("0.25"), trigger_price=Decimal("0.7")),),
+            rules=(ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("25"), trigger_price=Decimal("0.7")),),
             dry_run=True,
             slippage_bps=Decimal("50"),
         )
@@ -52,7 +52,7 @@ def test_task_service_pause_resume_and_record_append(tmp_path) -> None:
     service = TaskService.from_db_path(tmp_path / "poly-shield.db")
     task = service.create_task(
         token_id="token-3",
-        rules=(ExitRule(kind=RuleKind.TAKE_PROFIT, sell_ratio=Decimal("0.25"), trigger_price=Decimal("0.7")),),
+        rules=(ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("25"), trigger_price=Decimal("0.7")),),
         dry_run=False,
         slippage_bps=Decimal("25"),
     )
@@ -86,7 +86,7 @@ def test_task_service_runtime_changes_and_lease(tmp_path) -> None:
     service = TaskService.from_db_path(tmp_path / "poly-shield.db")
     task = service.create_task(
         token_id="token-4",
-        rules=(ExitRule(kind=RuleKind.TAKE_PROFIT, sell_ratio=Decimal("0.25"), trigger_price=Decimal("0.7")),),
+        rules=(ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("25"), trigger_price=Decimal("0.7")),),
         dry_run=False,
         slippage_bps=Decimal("25"),
     )

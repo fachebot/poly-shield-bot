@@ -42,7 +42,7 @@ poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
   --position-size 100 \
   --price-stop 0.40 \
-  --price-stop-ratio 0.5 \
+  --price-stop-size 50 \
   --dry-run \
   --run-once
 ```
@@ -135,7 +135,7 @@ poetry run poly-shield watch \
 
 必须参数：
 
-- `--breakeven-stop-ratio`
+- `--breakeven-stop-size`
 
 均价来源：
 
@@ -147,7 +147,7 @@ poetry run poly-shield watch \
 ```bash
 poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
-  --breakeven-stop-ratio 0.5 \
+  --breakeven-stop-size 50 \
   --dry-run \
   --run-once
 ```
@@ -157,7 +157,8 @@ poetry run poly-shield watch \
 - 如果当前持仓均价是 `0.065`
 - 当前 `best_bid` 是 `0.064`
 - 那就会触发保本止损
-- 如果持仓数量是 `100`，卖出比例是 `0.5`，那 `requested_size` 就是 `50`
+- 如果卖出股数设成 `50`，那 `requested_size` 就是 `50`
+- 如果当前可用仓位不足 `50`，那本轮只会按可用仓位截断卖出
 
 ## 2. 指定价格止损
 
@@ -172,7 +173,7 @@ poetry run poly-shield watch \
 必须参数：
 
 - `--price-stop`
-- `--price-stop-ratio`
+- `--price-stop-size`
 
 示例：
 
@@ -181,7 +182,7 @@ poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
   --position-size 100 \
   --price-stop 0.40 \
-  --price-stop-ratio 0.5 \
+  --price-stop-size 50 \
   --dry-run \
   --run-once
 ```
@@ -189,7 +190,8 @@ poetry run poly-shield watch \
 说明：
 
 - 当买一价跌到 `0.40` 或更低时触发
-- 如果仓位是 `100`，比例是 `0.5`，则本轮计划卖出 `50`
+- 如果卖出股数设成 `50`，则本轮计划卖出 `50`
+- 如果剩余可用仓位不足 `50`，则只会锁定当前可用仓位
 
 ## 3. 指定价格止盈
 
@@ -204,7 +206,7 @@ poetry run poly-shield watch \
 必须参数：
 
 - `--take-profit`
-- `--take-profit-ratio`
+- `--take-profit-size`
 
 示例：
 
@@ -213,7 +215,7 @@ poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
   --position-size 100 \
   --take-profit 0.68 \
-  --take-profit-ratio 0.25 \
+  --take-profit-size 25 \
   --dry-run \
   --run-once
 ```
@@ -221,7 +223,8 @@ poetry run poly-shield watch \
 说明：
 
 - 当买一价涨到 `0.68` 或更高时触发
-- 如果仓位是 `100`，比例是 `0.25`，则本轮计划卖出 `25`
+- 如果卖出股数设成 `25`，则本轮计划卖出 `25`
+- 如果当前可用仓位不足 `25`，则只会锁定剩余可用仓位
 
 ## 4. 峰值回撤止盈
 
@@ -237,7 +240,7 @@ poetry run poly-shield watch \
 必须参数：
 
 - `--trailing-drawdown`
-- `--trailing-drawdown-ratio`
+- `--trailing-sell-size`
 
 可选参数：
 
@@ -249,7 +252,7 @@ poetry run poly-shield watch \
 poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
   --trailing-drawdown 0.10 \
-  --trailing-drawdown-ratio 0.50 \
+  --trailing-sell-size 50 \
   --trailing-activation-price 0.65 \
   --dry-run
 ```
@@ -276,9 +279,9 @@ poetry run poly-shield watch \
 ```bash
 poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
-  --breakeven-stop-ratio 0.5 \
+  --breakeven-stop-size 50 \
   --take-profit 0.68 \
-  --take-profit-ratio 0.25 \
+  --take-profit-size 25 \
   --dry-run
 ```
 
@@ -294,9 +297,9 @@ poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
   --position-size 100 \
   --price-stop 0.40 \
-  --price-stop-ratio 0.5 \
+  --price-stop-size 50 \
   --take-profit 0.68 \
-  --take-profit-ratio 0.25 \
+  --take-profit-size 25 \
   --dry-run
 ```
 
@@ -311,9 +314,9 @@ poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
   --position-size 100 \
   --price-stop 0.40 \
-  --price-stop-ratio 0.5 \
+  --price-stop-size 50 \
   --trailing-drawdown 0.10 \
-  --trailing-drawdown-ratio 0.25 \
+  --trailing-sell-size 25 \
   --trailing-activation-price 0.65 \
   --dry-run
 ```
@@ -343,7 +346,7 @@ poetry run poly-shield positions --size-threshold 0
 ```bash
 poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
-  --breakeven-stop-ratio 0.5 \
+  --breakeven-stop-size 50 \
   --dry-run \
   --run-once
 ```
@@ -359,7 +362,7 @@ poetry run poly-shield watch \
 poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
   --position-size 40 \
-  --breakeven-stop-ratio 0.5 \
+  --breakeven-stop-size 20 \
   --dry-run \
   --run-once
 ```
@@ -375,7 +378,7 @@ poetry run poly-shield watch \
 poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
   --take-profit 0.118 \
-  --take-profit-ratio 0.25 \
+  --take-profit-size 25 \
   --dry-run \
   --run-once
 ```
@@ -391,7 +394,7 @@ poetry run poly-shield watch \
 poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
   --take-profit 0.118 \
-  --take-profit-ratio 0.25 \
+  --take-profit-size 25 \
   --dry-run \
   --poll-interval 2
 ```

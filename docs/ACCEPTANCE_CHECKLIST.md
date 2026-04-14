@@ -65,7 +65,7 @@ poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
   --position-size 100 \
   --price-stop 0.07 \
-  --price-stop-ratio 0.5 \
+  --price-stop-size 50 \
   --dry-run \
   --run-once
 ```
@@ -86,7 +86,7 @@ poetry run poly-shield watch \
 ```bash
 poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
-  --breakeven-stop-ratio 0.5 \
+  --breakeven-stop-size 50 \
   --dry-run \
   --run-once
 ```
@@ -95,7 +95,7 @@ poetry run poly-shield watch \
 
 - CLI 能从 `positions` 自动补齐仓位和均价
 - `trigger_price` 等于当前持仓均价
-- `requested_size` 等于持仓数量乘以卖出比例
+- `requested_size` 等于配置的 `breakeven-stop-size`；如果大于当前可用仓位则会被截断
 
 ## 5. 覆盖逻辑校验
 
@@ -105,7 +105,7 @@ poetry run poly-shield watch \
 poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
   --position-size 40 \
-  --breakeven-stop-ratio 0.5 \
+  --breakeven-stop-size 20 \
   --dry-run \
   --run-once
 ```
@@ -116,7 +116,7 @@ poetry run poly-shield watch \
 poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
   --average-cost 0.50 \
-  --breakeven-stop-ratio 0.5 \
+  --breakeven-stop-size 50 \
   --dry-run \
   --run-once
 ```
@@ -134,7 +134,7 @@ poetry run poly-shield watch \
 poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
   --take-profit <低于当前best_bid的价格> \
-  --take-profit-ratio 0.25 \
+  --take-profit-size 25 \
   --dry-run \
   --run-once
 ```
@@ -142,7 +142,7 @@ poetry run poly-shield watch \
 通过标准：
 
 - 状态为 `dry-run`
-- `requested_size` 等于持仓数量乘以 0.25
+- `requested_size` 等于配置的 `take-profit-size`
 
 ## 7. 峰值回撤止盈校验
 
@@ -152,7 +152,7 @@ poetry run poly-shield watch \
 poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
   --trailing-drawdown 0.05 \
-  --trailing-drawdown-ratio 0.25 \
+  --trailing-sell-size 25 \
   --trailing-activation-price 0.11 \
   --dry-run \
   --run-once
@@ -171,7 +171,7 @@ poetry run poly-shield watch \
 poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
   --take-profit <低于当前best_bid的价格> \
-  --take-profit-ratio 0.25 \
+  --take-profit-size 25 \
   --dry-run \
   --poll-interval 2
 ```
@@ -199,7 +199,7 @@ poetry run poly-shield watch \
   --token-id <TOKEN_ID> \
   --position-size <小仓位> \
   --price-stop <高于当前best_bid一点的价格> \
-  --price-stop-ratio 0.1 \
+  --price-stop-size 10 \
   --run-once
 ```
 

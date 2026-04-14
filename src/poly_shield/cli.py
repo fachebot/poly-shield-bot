@@ -60,19 +60,19 @@ def build_parser() -> argparse.ArgumentParser:
     watch_parser.add_argument(
         "--position-size", type=_decimal, help="手动覆盖持仓数量")
     watch_parser.add_argument(
-        "--breakeven-stop-ratio", type=_decimal, help="保本止损触发后的卖出比例")
+        "--breakeven-stop-size", type=_decimal, help="保本止损触发后的卖出股数")
     watch_parser.add_argument(
         "--price-stop", type=_decimal, help="固定价格止损触发价")
     watch_parser.add_argument(
-        "--price-stop-ratio", type=_decimal, help="固定价格止损触发后的卖出比例")
+        "--price-stop-size", type=_decimal, help="固定价格止损触发后的卖出股数")
     watch_parser.add_argument(
         "--take-profit", type=_decimal, help="固定价格止盈触发价")
-    watch_parser.add_argument("--take-profit-ratio",
-                              type=_decimal, help="固定价格止盈触发后的卖出比例")
+    watch_parser.add_argument("--take-profit-size",
+                              type=_decimal, help="固定价格止盈触发后的卖出股数")
     watch_parser.add_argument(
         "--trailing-drawdown", type=_decimal, help="峰值回撤止盈比例，例如 0.1 表示从峰值回撤 10%%")
     watch_parser.add_argument(
-        "--trailing-drawdown-ratio", type=_decimal, help="峰值回撤止盈触发后的卖出比例")
+        "--trailing-sell-size", type=_decimal, help="峰值回撤止盈触发后的卖出股数")
     watch_parser.add_argument(
         "--trailing-activation-price", type=_decimal, help="可选，峰值回撤止盈开始生效前必须先达到的价格")
     watch_parser.add_argument(
@@ -153,19 +153,19 @@ def _add_rule_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--token-id", required=True, help="要监控的 Polymarket token ID")
     parser.add_argument(
-        "--breakeven-stop-ratio", type=_decimal, help="保本止损触发后的卖出比例")
+        "--breakeven-stop-size", type=_decimal, help="保本止损触发后的卖出股数")
     parser.add_argument(
         "--price-stop", type=_decimal, help="固定价格止损触发价")
     parser.add_argument(
-        "--price-stop-ratio", type=_decimal, help="固定价格止损触发后的卖出比例")
+        "--price-stop-size", type=_decimal, help="固定价格止损触发后的卖出股数")
     parser.add_argument(
         "--take-profit", type=_decimal, help="固定价格止盈触发价")
     parser.add_argument(
-        "--take-profit-ratio", type=_decimal, help="固定价格止盈触发后的卖出比例")
+        "--take-profit-size", type=_decimal, help="固定价格止盈触发后的卖出股数")
     parser.add_argument(
         "--trailing-drawdown", type=_decimal, help="峰值回撤止盈比例，例如 0.1 表示从峰值回撤 10%%")
     parser.add_argument(
-        "--trailing-drawdown-ratio", type=_decimal, help="峰值回撤止盈触发后的卖出比例")
+        "--trailing-sell-size", type=_decimal, help="峰值回撤止盈触发后的卖出股数")
     parser.add_argument(
         "--trailing-activation-price", type=_decimal, help="可选，峰值回撤止盈开始生效前必须先达到的价格")
 
@@ -173,40 +173,40 @@ def _add_rule_arguments(parser: argparse.ArgumentParser) -> None:
 def build_rules(args: argparse.Namespace) -> tuple[ExitRule, ...]:
     """把命令行参数转换成规则对象集合。"""
     rules: list[ExitRule] = []
-    if args.breakeven_stop_ratio is not None:
+    if args.breakeven_stop_size is not None:
         rules.append(ExitRule(kind=RuleKind.BREAKEVEN_STOP,
-                     sell_ratio=args.breakeven_stop_ratio))
-    if args.price_stop is not None or args.price_stop_ratio is not None:
-        if args.price_stop is None or args.price_stop_ratio is None:
+                     sell_size=args.breakeven_stop_size))
+    if args.price_stop is not None or args.price_stop_size is not None:
+        if args.price_stop is None or args.price_stop_size is None:
             raise ValueError(
-                "--price-stop and --price-stop-ratio must be provided together")
+                "--price-stop and --price-stop-size must be provided together")
         rules.append(
             ExitRule(
                 kind=RuleKind.PRICE_STOP,
-                sell_ratio=args.price_stop_ratio,
+                sell_size=args.price_stop_size,
                 trigger_price=args.price_stop,
             )
         )
-    if args.take_profit is not None or args.take_profit_ratio is not None:
-        if args.take_profit is None or args.take_profit_ratio is None:
+    if args.take_profit is not None or args.take_profit_size is not None:
+        if args.take_profit is None or args.take_profit_size is None:
             raise ValueError(
-                "--take-profit and --take-profit-ratio must be provided together")
+                "--take-profit and --take-profit-size must be provided together")
         rules.append(
             ExitRule(
                 kind=RuleKind.TAKE_PROFIT,
-                sell_ratio=args.take_profit_ratio,
+                sell_size=args.take_profit_size,
                 trigger_price=args.take_profit,
             )
         )
-    if args.trailing_drawdown is not None or args.trailing_drawdown_ratio is not None or args.trailing_activation_price is not None:
-        if args.trailing_drawdown is None or args.trailing_drawdown_ratio is None:
+    if args.trailing_drawdown is not None or args.trailing_sell_size is not None or args.trailing_activation_price is not None:
+        if args.trailing_drawdown is None or args.trailing_sell_size is None:
             raise ValueError(
-                "--trailing-drawdown and --trailing-drawdown-ratio must be provided together"
+                "--trailing-drawdown and --trailing-sell-size must be provided together"
             )
         rules.append(
             ExitRule(
                 kind=RuleKind.TRAILING_TAKE_PROFIT,
-                sell_ratio=args.trailing_drawdown_ratio,
+                sell_size=args.trailing_sell_size,
                 trigger_price=args.trailing_activation_price,
                 drawdown_ratio=args.trailing_drawdown,
             )
@@ -220,7 +220,7 @@ def _serialize_rule(rule: ExitRule) -> dict[str, str | None]:
     """把规则对象转换成后端 API 可消费的 JSON。"""
     return {
         "kind": rule.kind.value,
-        "sell_ratio": str(rule.sell_ratio),
+        "sell_size": str(rule.sell_size),
         "trigger_price": None if rule.trigger_price is None else str(rule.trigger_price),
         "drawdown_ratio": None if rule.drawdown_ratio is None else str(rule.drawdown_ratio),
         "label": rule.label,
@@ -288,6 +288,7 @@ def handle_positions(args: argparse.Namespace) -> int:
             "outcome": position.outcome,
             "market": position.market,
             "title": position.title,
+            "event_slug": position.event_slug,
             "slug": position.slug,
         }
         for position in positions

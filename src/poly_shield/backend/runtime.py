@@ -77,11 +77,13 @@ class ManagedTaskRunner:
             best_bid=quote.best_bid,
         )
         events: list[WatchEvent] = []
+        record_candidates: list[tuple[WatchEvent, bool]] = []
         attempts: list[ExecutionAttempt] = []
         task_status: TaskStatus | None = None
 
         for rule in self.task.rules:
             state = self.watcher.rule_states.setdefault(rule.name, RuleState())
+            was_triggered_before = state.is_triggered
             decision = evaluate_rule(
                 rule,
                 snapshot,
@@ -91,7 +93,9 @@ class ManagedTaskRunner:
                 ),
             )
             if not decision.triggered:
-                events.append(self.watcher._non_trigger_event(self._watch_task(), rule, decision, quote))
+                event = self.watcher._non_trigger_event(self._watch_task(), rule, decision, quote)
+                events.append(event)
+                record_candidates.append((event, was_triggered_before))
                 continue
 
             request = self.executor.build_request(
@@ -105,7 +109,9 @@ class ManagedTaskRunner:
                 result = self.executor.execute(request)
                 if result.filled_size > ZERO:
                     state.register_fill(result.filled_size)
-                events.append(self.watcher._trigger_event(self._watch_task(), rule, decision, result, quote))
+                event = self.watcher._trigger_event(self._watch_task(), rule, decision, result, quote)
+                events.append(event)
+                record_candidates.append((event, was_triggered_before))
                 continue
 
             prepared_attempt = ExecutionAttempt.create_prepared(
@@ -141,6 +147,7 @@ class ManagedTaskRunner:
                         message=f"execution interrupted; task paused for review: {exc}",
                     )
                 )
+                record_candidates.append((events[-1], was_triggered_before))
                 break
 
             if result.order_id is None:
@@ -161,6 +168,7 @@ class ManagedTaskRunner:
                         message="live execution response missing order_id; task paused for review",
                     )
                 )
+                record_candidates.append((events[-1], was_triggered_before))
                 break
 
             if result.filled_size > ZERO:
@@ -174,7 +182,9 @@ class ManagedTaskRunner:
                     message=result.details or result.status,
                 )
             )
-            events.append(self.watcher._trigger_event(self._watch_task(), rule, decision, result, quote))
+            event = self.watcher._trigger_event(self._watch_task(), rule, decision, result, quote)
+            events.append(event)
+            record_candidates.append((event, was_triggered_before))
 
         if task_status is None and self._all_rules_complete():
             task_status = TaskStatus.COMPLETED
@@ -184,7 +194,8 @@ class ManagedTaskRunner:
                 event,
                 event_type="attempt" if event.status == "needs-review" else "rule",
             )
-            for event in events
+            for event, was_triggered_before in record_candidates
+            if self._should_persist_event(event, was_triggered_before)
         )
         self.task = self.service.persist_runtime_changes(
             self.task.task_id,
@@ -218,6 +229,13 @@ class ManagedTaskRunner:
             filled_size=event.filled_size,
             message=event.message,
         )
+
+    def _should_persist_event(self, event: WatchEvent, was_triggered_before: bool) -> bool:
+        if event.status == "waiting":
+            return False
+        if event.status == "dry-run" and was_triggered_before:
+            return False
+        return True
 
     def _review_required_event(
         self,

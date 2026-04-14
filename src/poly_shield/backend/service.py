@@ -81,9 +81,19 @@ class TaskService:
             self.active_tasks[task.task_id] = task
         return task
 
-    def list_tasks(self, *, status: TaskStatus | None = None, include_deleted: bool = False) -> list[ManagedTask]:
+    def list_tasks(
+        self,
+        *,
+        status: TaskStatus | None = None,
+        include_deleted: bool = False,
+        token_id: str | None = None,
+    ) -> list[ManagedTask]:
         """列出任务。"""
-        return self.store.list_tasks(status=status, include_deleted=include_deleted)
+        return self.store.list_tasks(
+            status=status,
+            include_deleted=include_deleted,
+            token_id=token_id,
+        )
 
     def get_task(self, task_id: str) -> ManagedTask:
         """读取单个任务。"""
@@ -112,6 +122,32 @@ class TaskService:
         self.get_task(task_id)
         return self.set_task_status(task_id, TaskStatus.DELETED)
 
+    def update_task(
+        self,
+        task_id: str,
+        *,
+        rules: tuple[ExitRule, ...],
+        dry_run: bool,
+        slippage_bps: Decimal,
+        position_size: Decimal | None = None,
+        average_cost: Decimal | None = None,
+    ) -> ManagedTask:
+        """更新任务定义。仅允许 paused 任务修改。"""
+        task = self.get_task(task_id)
+        if task.status is not TaskStatus.PAUSED:
+            raise TaskConflictError("task must be paused before updating")
+        WatchTask(token_id=task.token_id, rules=rules, dry_run=dry_run)
+        updated = self.store.update_task(
+            task_id,
+            rules=rules,
+            dry_run=dry_run,
+            slippage_bps=slippage_bps,
+            position_size=position_size,
+            average_cost=average_cost,
+        )
+        self.active_tasks.pop(task_id, None)
+        return updated
+
     def set_task_status(self, task_id: str, status: TaskStatus) -> ManagedTask:
         """统一更新任务状态，并同步内存注册表。"""
         updated = self.store.update_task_status(task_id, status)
@@ -121,9 +157,19 @@ class TaskService:
             self.active_tasks.pop(task_id, None)
         return updated
 
-    def list_execution_records(self, *, task_id: str | None = None, limit: int = 100) -> list[ExecutionRecord]:
+    def list_execution_records(
+        self,
+        *,
+        task_id: str | None = None,
+        token_id: str | None = None,
+        limit: int = 100,
+    ) -> list[ExecutionRecord]:
         """列出执行记录。"""
-        return self.store.list_execution_records(task_id=task_id, limit=limit)
+        return self.store.list_execution_records(
+            task_id=task_id,
+            token_id=token_id,
+            limit=limit,
+        )
 
     def list_execution_attempts(
         self,
