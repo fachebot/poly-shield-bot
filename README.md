@@ -13,11 +13,11 @@ Polymarket 自动止盈止损机器人。
 - 部分成交续卖语义：规则第一次触发后锁定目标卖出数量，后续只补卖剩余数量，避免重复锁定导致超卖。
 - 多条规则的可用仓位隔离：同一轮里前面的规则先占用仓位，后面的规则只从剩余可用仓位里锁定卖出股数；如果目标大于可用仓位，会自动截断，避免同轮超卖。
 - `watch` 命令：支持常驻轮询、`--run-once` 单次执行和 `--dry-run` 只读演练。
-- `watch` 输出现在会带上 `best_ask`、`top_bids` 和 `top_asks`，方便直接对照网页盘口联调。
+- `watch` 输出现在会带上 `best_ask`、`top_bids` 和 `top_asks`，方便直接对照盘口联调。
 - `positions` 命令：接官方 `GET /positions`，可自动列出账户当前全部持仓和均价，也支持按 token 过滤。
 - Polymarket CLOB 接入骨架：订单簿读取、条件 token 余额读取、FAK 市价卖出、heartbeat 接口封装。
 - 后端服务骨架：新增 FastAPI 服务、SQLite 任务仓储、任务状态与执行记录表。
-- 新的任务管理命令：CLI 已支持 `serve`、`tasks`、`records`，开始向“前端调后端”模式迁移。
+- 新的任务管理命令：CLI 已支持 `serve`、`tasks`、`records`，开始向后端 API 驱动模式迁移。
 - 后端任务现在也支持手动保存 `position_size` / `average_cost` 覆盖值，在官方 positions 接口受限时仍可运行 active 任务。
 - 实时执行链路：后端已接上 Polymarket 市场 websocket，active 任务会按订阅到的行情事件驱动执行，并把规则状态和执行记录持久化。
 - 用户成交跟踪：后端已接入 user websocket，会把 bot 提交订单的 order/trade 生命周期继续写入执行记录，补齐 `matched -> confirmed/failed` 这条链路。
@@ -30,7 +30,7 @@ Polymarket 自动止盈止损机器人。
 
 - 当前环境下直接访问官方 `https://data-api.polymarket.com/positions` 会命中 `403 / error code: 1010`，更像是 Cloudflare/地理限制，不是本地解析代码错误。
 - 因为上面的限制，我已经把官方 positions 接口接进代码和测试，但没法在这个环境里完成真实在线验证。
-- Telegram Bot、网页前端、多用户权限系统还没开始做。
+- Telegram Bot、多用户权限系统还没开始做；当前仓库不再内置网页前端。
 - 用户 websocket 需要服务端可用的 API key/secret/passphrase；如果本地没有可用交易凭证，这条链路无法在线建立连接。
 - 真实卖单路径已经接上 py-clob-client，但还没做真实账户的小仓位联调。
 
@@ -183,7 +183,7 @@ poetry run poly-shield watch \
 
 止盈止损的详细参数说明、规则解释和示例，见 [docs/STOP_LOSS_TAKE_PROFIT_GUIDE.md](docs/STOP_LOSS_TAKE_PROFIT_GUIDE.md)。
 
-如果你现在想体验前后端拆分后的新链路，建议这样跑：
+如果你现在想体验新的后端任务链路，建议这样跑：
 
 1. 先执行 `poetry run poly-shield serve`
 2. 再用 `poetry run poly-shield tasks add ...` 创建任务

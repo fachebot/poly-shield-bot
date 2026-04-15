@@ -178,7 +178,7 @@ class QuoteAwarePositionReader(FakePositionReader):
         return Decimal("0.53")
 
 
-def test_api_serves_positions_and_frontend_shell(tmp_path) -> None:
+def test_api_serves_positions_without_frontend_shell(tmp_path) -> None:
     service = TaskService.from_db_path(tmp_path / "poly-shield.db")
     client = TestClient(create_app(service, position_reader=FakePositionReader()))
 
@@ -189,8 +189,7 @@ def test_api_serves_positions_and_frontend_shell(tmp_path) -> None:
     assert positions.json()[0]["title"] == "Will it happen?"
     assert positions.json()[0]["event_slug"] == "will-it-happen-event"
     assert positions.json()[0]["current_price"] == "0.55"
-    assert index.status_code == 200
-    assert "Poly Shield Control Room" in index.text
+    assert index.status_code == 404
 
 
 def test_api_prefers_best_bid_for_position_metrics(tmp_path) -> None:

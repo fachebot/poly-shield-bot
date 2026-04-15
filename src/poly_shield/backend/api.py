@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-"""FastAPI 后端接口，供 CLI、网页和 Telegram 复用。"""
+"""FastAPI 后端接口，供 CLI 和 Telegram 复用。"""
 
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
-from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from poly_shield.backend.models import ExecutionRecord, ManagedTask, TaskStatus
@@ -151,7 +148,6 @@ def create_app(
     runtime: ManagedTaskRuntime | None = None,
     *,
     position_reader: PositionReader | None = None,
-    web_root: Path | None = None,
 ) -> FastAPI:
     """创建后端 API 应用。"""
     @asynccontextmanager
@@ -164,9 +160,6 @@ def create_app(
 
     app = FastAPI(title="Poly Shield Backend",
                   version="0.1.0", lifespan=lifespan)
-    resolved_web_root = web_root or Path(__file__).with_name("web")
-    if resolved_web_root.exists():
-        app.mount("/assets", StaticFiles(directory=resolved_web_root), name="assets")
 
     async def refresh_runtime() -> None:
         if runtime is not None:
@@ -179,13 +172,6 @@ def create_app(
         if position_reader is not None:
             return position_reader
         return PolymarketGateway(PolymarketCredentials.from_env())
-
-    @app.get("/", response_class=HTMLResponse, response_model=None)
-    def index():
-        index_file = resolved_web_root / "index.html"
-        if not index_file.exists():
-            return HTMLResponse("Poly Shield web UI is not available.", status_code=404)
-        return FileResponse(index_file)
 
     @app.get("/health")
     def health() -> dict[str, object]:
