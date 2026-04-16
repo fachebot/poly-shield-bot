@@ -1,53 +1,70 @@
 {# partials/positions.html — hx-swap="innerHTML" into #pos-list #}
-{% if positions_error %}
-<div class="empty-state" style="padding:32px 16px">
-    <i class="bi bi-{{ 'key' if positions_error == 'config' else 'wifi-off' }}" style="font-size:28px"></i>
-    <p style="font-size:13px;font-weight:600;margin:4px 0 0">
-        {% if positions_error == 'config' %}未配置 Polymarket 凭据{% else %}获取持仓数据失败{% endif %}
-    </p>
-    <p style="font-size:11px;color:var(--text-muted);margin:2px 0 0;text-align:center">
-        {% if positions_error == 'config' %}请在 .env 中配置 PK 或 API Key{% else %}请检查网络或代理设置{% endif %}
-    </p>
+<div class="filter-tabs" style="margin-bottom:8px">
+    <button class="filter-tab {% if current_tab == 'active' %}active{% endif %}" hx-get="/ui/panels/positions"
+        hx-target="#pos-list" hx-swap="innerHTML" hx-vals='{"tab":"active"}'>持有仓位 {{ active_count }}</button>
+    <button class="filter-tab {% if current_tab == 'archived' %}active{% endif %}" hx-get="/ui/panels/positions"
+        hx-target="#pos-list" hx-swap="innerHTML" hx-vals='{"tab":"archived"}'>存档仓位 {{ archived_count }}</button>
 </div>
-{% elif positions %}
-{% for pos in positions %}
-<div class="pos-item" data-token-id="{{ pos.token_id }}">
-    <div class="pos-toggle">
-        <div class="pos-icon"
-            style="{% if pos.cash_pnl_raw >= 0 %}background:var(--brand-light);color:var(--brand){% else %}background:var(--red-light);color:var(--red){% endif %}">
-            {{ pos.title[:1] if pos.title else pos.token_id[:1] | upper }}
+
+<div data-current-tab="{{ current_tab }}">
+    {% if positions_error and current_tab == "active" %}
+    <div class="empty-state" style="padding:32px 16px">
+        <i class="bi bi-{{ 'key' if positions_error == 'config' else 'wifi-off' }}" style="font-size:28px"></i>
+        <p style="font-size:13px;font-weight:600;margin:4px 0 0">
+            {% if positions_error == 'config' %}未配置 Polymarket 凭据{% else %}获取持仓数据失败{% endif %}
+        </p>
+        <p style="font-size:11px;color:var(--text-muted);margin:2px 0 0;text-align:center">
+            {% if positions_error == 'config' %}请在 .env 中配置 PK 或 API Key{% else %}请检查网络或代理设置{% endif %}
+        </p>
+    </div>
+    {% elif positions %}
+    {% for pos in positions %}
+    <div class="pos-item" data-token-id="{{ pos.token_id }}" data-readonly="{{ '1' if pos.is_archived else '0' }}"
+        data-position-tab="{{ 'archived' if pos.is_archived else 'active' }}">
+        <div class="pos-toggle">
+            <div class="pos-icon"
+                style="{% if pos.cash_pnl_raw >= 0 %}background:var(--brand-light);color:var(--brand){% else %}background:var(--red-light);color:var(--red){% endif %}">
+                {{ pos.title[:1] if pos.title else pos.token_id[:1] | upper }}
+            </div>
+            <div class="pos-main">
+                <div class="pos-name">{{ pos.title or pos.token_id }}</div>
+                <div class="pos-sub">{{ pos.size }} · 均价 {{ format_cents(pos.average_cost) }}</div>
+            </div>
+            <div class="pos-right">
+                {% if pos.is_archived %}
+                <span class="status-badge s-paused" style="font-size:10px;padding:2px 6px">只读</span>
+                {% endif %}
+                {% if pos.outcome %}
+                <span class="outcome-pill {% if pos.outcome == 'Yes' %}pill-yes{% else %}pill-no{% endif %}">
+                    {{ pos.outcome }}
+                </span>
+                {% endif %}
+                <span class="pos-pnl {% if pos.cash_pnl_raw >= 0 %}val-pos{% else %}val-neg{% endif %}">
+                    {% if pos.cash_pnl_raw >= 0 %}+{% endif %}${{ pos.cash_pnl }}
+                </span>
+            </div>
+            <i class="bi bi-chevron-down chevron"></i>
         </div>
-        <div class="pos-main">
-            <div class="pos-name">{{ pos.title or pos.token_id }}</div>
-            <div class="pos-sub">{{ pos.size }} · 均价 {{ format_cents(pos.average_cost) }}</div>
-        </div>
-        <div class="pos-right">
-            {% if pos.outcome %}
-            <span class="outcome-pill {% if pos.outcome == 'Yes' %}pill-yes{% else %}pill-no{% endif %}">
-                {{ pos.outcome }}
-            </span>
+        <div class="pos-detail">
+            {% if pos.is_archived %}
+            <div class="pd-row"><span class="k">历史任务</span><span class="v">{{ pos.task_count }} 条</span></div>
             {% endif %}
-            <span class="pos-pnl {% if pos.cash_pnl_raw >= 0 %}val-pos{% else %}val-neg{% endif %}">
-                {% if pos.cash_pnl_raw >= 0 %}+{% endif %}${{ pos.cash_pnl }}
-            </span>
-        </div>
-        <i class="bi bi-chevron-down chevron"></i>
-    </div>
-    <div class="pos-detail">
-        <div class="pd-row"><span class="k">当前价</span><span class="v">{{ format_cents(pos.current_price) }}</span></div>
-        <div class="pd-row"><span class="k">当前价值</span><span class="v">${{ pos.current_value }}</span></div>
-        <div class="pd-row">
-            <span class="k">盈亏</span>
-            <span class="v {% if pos.cash_pnl_raw >= 0 %}val-pos{% else %}val-neg{% endif %}">
-                {% if pos.cash_pnl_raw >= 0 %}+{% endif %}${{ pos.cash_pnl }} ({{ pos.percent_pnl }}%)
-            </span>
+            <div class="pd-row"><span class="k">当前价</span><span class="v">{{ format_cents(pos.current_price) }}</span>
+            </div>
+            <div class="pd-row"><span class="k">当前价值</span><span class="v">${{ pos.current_value }}</span></div>
+            <div class="pd-row">
+                <span class="k">盈亏</span>
+                <span class="v {% if pos.cash_pnl_raw >= 0 %}val-pos{% else %}val-neg{% endif %}">
+                    {% if pos.cash_pnl_raw >= 0 %}+{% endif %}${{ pos.cash_pnl }} ({{ pos.percent_pnl }}%)
+                </span>
+            </div>
         </div>
     </div>
+    {% endfor %}
+    {% else %}
+    <div class="empty-state">
+        <i class="bi bi-wallet2"></i>
+        <p>{% if current_tab == 'archived' %}暂无存档仓位{% else %}暂无持仓数据{% endif %}</p>
+    </div>
+    {% endif %}
 </div>
-{% endfor %}
-{% else %}
-<div class="empty-state">
-    <i class="bi bi-wallet2"></i>
-    <p>暂无持仓数据</p>
-</div>
-{% endif %}

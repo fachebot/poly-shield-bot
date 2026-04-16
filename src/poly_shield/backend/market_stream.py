@@ -57,6 +57,7 @@ class PolymarketMarketStream:
         *,
         stop_event: asyncio.Event,
         on_quote: Callable[[str, QuoteSnapshot], Awaitable[None]],
+        on_heartbeat: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         """持续消费 websocket 消息，直到 stop_event 被置位。"""
         async with connect(self.endpoint) as websocket:
@@ -69,6 +70,10 @@ class PolymarketMarketStream:
                     if monotonic() - last_ping_at >= self.ping_interval_seconds:
                         await websocket.send("PING")
                         last_ping_at = monotonic()
+                    continue
+                if raw_message == "PONG":
+                    if on_heartbeat is not None:
+                        await on_heartbeat()
                     continue
                 for token_id, quote in self.extract_quotes(raw_message):
                     await on_quote(token_id, quote)

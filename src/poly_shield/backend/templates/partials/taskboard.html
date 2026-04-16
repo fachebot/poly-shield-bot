@@ -44,10 +44,16 @@
             hx-vals='{"status":"{{ current_status }}", "token_id":"{{ token_id|e }}"}' id="refreshBtn">
             <i class="bi bi-arrow-clockwise"></i> 刷新任务板
         </button>
+        {% if is_archived_position %}
+        <button class="btn-brand" disabled title="存档仓位为只读，不允许创建任务">
+            <i class="bi bi-lock"></i> 存档只读
+        </button>
+        {% else %}
         <button class="btn-brand" hx-get="/ui/modals/create_task" hx-target="#modal-slot" hx-swap="innerHTML"
             hx-vals='{"token_id":"{{ token_id|e }}"}' {% if not token_id %}title="请先在左侧选择一个仓位" {% endif %}>
             <i class="bi bi-plus-lg"></i> 新建任务
         </button>
+        {% endif %}
     </div>
 </div>
 {% if token_id %}
@@ -70,6 +76,10 @@
             {% endif %}
         </div>
         <div class="pcb-meta-row">
+            {% if is_archived_position %}
+            <span class="status-badge s-paused" style="font-size:10px;padding:2px 6px">存档只读</span>
+            <span class="pcb-meta-sep">·</span>
+            {% endif %}
             {% if selected_position_price %}
             <span class="pcb-meta-item">
                 <i class="bi bi-activity" style="font-size:10px"></i>
@@ -132,11 +142,13 @@
         {% endfor %}
 
         <!-- Add placeholder -->
+        {% if not is_archived_position %}
         <div class="task-card-add" hx-get="/ui/modals/create_task" hx-target="#modal-slot" hx-swap="innerHTML"
             hx-vals='{"token_id":"{{ token_id|e }}"}'>
             <i class="bi bi-plus-circle" style="font-size:20px"></i>
             新建任务
         </div>
+        {% endif %}
 
     </div><!-- /board-scroll -->
 </div><!-- /board-section -->

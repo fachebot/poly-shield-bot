@@ -93,7 +93,8 @@ class ManagedTaskRunner:
                 ),
             )
             if not decision.triggered:
-                event = self.watcher._non_trigger_event(self._watch_task(), rule, decision, quote)
+                event = self.watcher._non_trigger_event(
+                    self._watch_task(), rule, decision, quote)
                 events.append(event)
                 record_candidates.append((event, was_triggered_before))
                 continue
@@ -109,7 +110,8 @@ class ManagedTaskRunner:
                 result = self.executor.execute(request)
                 if result.filled_size > ZERO:
                     state.register_fill(result.filled_size)
-                event = self.watcher._trigger_event(self._watch_task(), rule, decision, result, quote)
+                event = self.watcher._trigger_event(
+                    self._watch_task(), rule, decision, result, quote)
                 events.append(event)
                 record_candidates.append((event, was_triggered_before))
                 continue
@@ -182,7 +184,8 @@ class ManagedTaskRunner:
                     message=result.details or result.status,
                 )
             )
-            event = self.watcher._trigger_event(self._watch_task(), rule, decision, result, quote)
+            event = self.watcher._trigger_event(
+                self._watch_task(), rule, decision, result, quote)
             events.append(event)
             record_candidates.append((event, was_triggered_before))
 
@@ -298,7 +301,8 @@ class QuoteLoader(Protocol):
 class OrderReconciler(Protocol):
     """运行时依赖的订单对账接口。"""
 
-    def __call__(self, order_id: str, tracked_order: "TrackedOrder") -> list[UserStreamEvent]: ...
+    def __call__(self, order_id: str,
+                 tracked_order: "TrackedOrder") -> list[UserStreamEvent]: ...
 
 
 @dataclass(frozen=True)
@@ -378,7 +382,8 @@ class ManagedTaskRuntime:
         self._user_task = None
         self._maintenance_task = None
         if self._lease is not None:
-            self.service.release_runtime_lease(self.lease.lease_key, self.lease.owner_id)
+            self.service.release_runtime_lease(
+                self.lease.lease_key, self.lease.owner_id)
             self._lease = None
 
     async def refresh_active_tasks(self) -> None:
@@ -399,7 +404,8 @@ class ManagedTaskRuntime:
         )
         user_stale_seconds = self._compute_stale_seconds(
             self._last_user_message_at,
-            relevant=bool(self.tracked_orders) or bool(self._subscribed_market_ids),
+            relevant=bool(self.tracked_orders) or bool(
+                self._subscribed_market_ids),
         )
         stale_candidates = [
             value for value in (market_stale_seconds, user_stale_seconds) if value is not None
@@ -447,6 +453,7 @@ class ManagedTaskRuntime:
                 await stream.pump_quotes(
                     stop_event=self._market_session_stop_event,
                     on_quote=self._dispatch_quote,
+                    on_heartbeat=self._on_market_heartbeat,
                 )
             except Exception:
                 if self._stop_event.is_set():
@@ -492,6 +499,9 @@ class ManagedTaskRuntime:
             finally:
                 self._user_session_stop_event = None
 
+    async def _on_market_heartbeat(self) -> None:
+        self._last_market_message_at = utc_now()
+
     async def _dispatch_quote(self, token_id: str, quote: QuoteSnapshot) -> None:
         self._last_market_message_at = utc_now()
         runners = [runner for runner in self.runners.values(
@@ -511,7 +521,8 @@ class ManagedTaskRuntime:
         if match is None:
             return
         matched_order_id, tracked_order = match
-        attempt = self.service.get_latest_execution_attempt_by_order_id(matched_order_id)
+        attempt = self.service.get_latest_execution_attempt_by_order_id(
+            matched_order_id)
         attempt_updates: tuple[ExecutionAttempt, ...] = ()
         task_status: TaskStatus | None = None
         if attempt is not None:
@@ -704,7 +715,8 @@ class ManagedTaskRuntime:
             )
         user_stale_seconds = self._compute_stale_seconds(
             self._last_user_message_at,
-            relevant=bool(self.tracked_orders) or bool(self._subscribed_market_ids),
+            relevant=bool(self.tracked_orders) or bool(
+                self._subscribed_market_ids),
         )
         if (
             self.user_stale_pause_seconds is not None
@@ -712,7 +724,8 @@ class ManagedTaskRuntime:
             and user_stale_seconds >= self.user_stale_pause_seconds
         ):
             await self._pause_tasks_for_reason(
-                tuple(sorted({order.task_id for order in self.tracked_orders.values()})),
+                tuple(
+                    sorted({order.task_id for order in self.tracked_orders.values()})),
                 reason=f"user execution updates stale for {user_stale_seconds:.1f}s; task paused automatically",
             )
 
@@ -847,7 +860,8 @@ def build_default_runtime(service: TaskService) -> ManagedTaskRuntime:
 
     def reconcile_order(order_id: str, tracked_order: TrackedOrder) -> list[UserStreamEvent]:
         order = reconcile_gateway.get_order(order_id)
-        associate_trades = _extract_field(order, "associate_trades", "associateTrades") or []
+        associate_trades = _extract_field(
+            order, "associate_trades", "associateTrades") or []
         if isinstance(associate_trades, str):
             associate_trades = [associate_trades]
         trade_statuses: list[str] = []
@@ -864,13 +878,16 @@ def build_default_runtime(service: TaskService) -> ManagedTaskRuntime:
             if any(status not in {"confirmed", "failed"} for status in trade_statuses):
                 return []
             terminal_status = "failed" if "failed" in trade_statuses else "confirmed"
-            maker_orders = _extract_field(latest_trade, "maker_orders", "makerOrders") or []
+            maker_orders = _extract_field(
+                latest_trade, "maker_orders", "makerOrders") or []
             related_order_ids = tuple(
                 order_id_value
                 for order_id_value in [
-                    str(_extract_field(latest_trade, "taker_order_id", "takerOrderId") or "") or None,
+                    str(_extract_field(latest_trade, "taker_order_id",
+                        "takerOrderId") or "") or None,
                     *[
-                        str(_extract_field(maker_order, "order_id", "orderId") or "") or None
+                        str(_extract_field(maker_order,
+                            "order_id", "orderId") or "") or None
                         for maker_order in maker_orders
                     ],
                 ]
@@ -882,11 +899,16 @@ def build_default_runtime(service: TaskService) -> ManagedTaskRuntime:
                     status=terminal_status,
                     order_id=order_id,
                     related_order_ids=related_order_ids or (order_id,),
-                    token_id=str(_extract_field(latest_trade, "asset_id", "assetId") or tracked_order.token_id),
-                    market_id=str(_extract_field(latest_trade, "market") or tracked_order.market_id) or None,
-                    requested_size=_decimal_field(order, "original_size", "originalSize", default=ZERO),
-                    filled_size=_decimal_field(order, "size_matched", "sizeMatched", default=ZERO),
-                    event_price=_decimal_field(latest_trade, "price", default=ZERO),
+                    token_id=str(_extract_field(
+                        latest_trade, "asset_id", "assetId") or tracked_order.token_id),
+                    market_id=str(_extract_field(latest_trade, "market")
+                                  or tracked_order.market_id) or None,
+                    requested_size=_decimal_field(
+                        order, "original_size", "originalSize", default=ZERO),
+                    filled_size=_decimal_field(
+                        order, "size_matched", "sizeMatched", default=ZERO),
+                    event_price=_decimal_field(
+                        latest_trade, "price", default=ZERO),
                     message=f"rest reconciled trade {terminal_status}",
                 )
             ]
@@ -898,10 +920,14 @@ def build_default_runtime(service: TaskService) -> ManagedTaskRuntime:
                     status="failed",
                     order_id=order_id,
                     related_order_ids=(order_id,),
-                    token_id=str(_extract_field(order, "asset_id", "assetId") or tracked_order.token_id),
-                    market_id=str(_extract_field(order, "market") or tracked_order.market_id) or None,
-                    requested_size=_decimal_field(order, "original_size", "originalSize", default=ZERO),
-                    filled_size=_decimal_field(order, "size_matched", "sizeMatched", default=ZERO),
+                    token_id=str(_extract_field(order, "asset_id",
+                                 "assetId") or tracked_order.token_id),
+                    market_id=str(_extract_field(order, "market")
+                                  or tracked_order.market_id) or None,
+                    requested_size=_decimal_field(
+                        order, "original_size", "originalSize", default=ZERO),
+                    filled_size=_decimal_field(
+                        order, "size_matched", "sizeMatched", default=ZERO),
                     event_price=_decimal_field(order, "price", default=ZERO),
                     message=f"rest reconciled order status {order_status}",
                 )

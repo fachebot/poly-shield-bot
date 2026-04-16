@@ -39,7 +39,7 @@ class FakeMarketStream:
         self.token_ids = token_ids
         self.quote = quote
 
-    async def pump_quotes(self, *, stop_event, on_quote) -> None:
+    async def pump_quotes(self, *, stop_event, on_quote, on_heartbeat=None) -> None:
         await on_quote(self.token_ids[0], self.quote)
         await stop_event.wait()
 
@@ -63,7 +63,7 @@ class CrashingUserStream:
 
 
 class IdleMarketStream:
-    async def pump_quotes(self, *, stop_event, on_quote) -> None:
+    async def pump_quotes(self, *, stop_event, on_quote, on_heartbeat=None) -> None:
         await stop_event.wait()
 
 
@@ -91,15 +91,18 @@ def test_managed_task_runner_does_not_persist_waiting_records(tmp_path) -> None:
         task=task,
         position_provider=ManualPositionProvider(
             size=Decimal("100"), average_cost=Decimal("0.40")),
-        executor=ExitExecutor(gateway=FakeSellGateway(), slippage_bps=Decimal("50")),
+        executor=ExitExecutor(gateway=FakeSellGateway(),
+                              slippage_bps=Decimal("50")),
     )
 
     events = runner.process_quote(
         QuoteSnapshot(
             best_bid=Decimal("0.71"),
             best_ask=Decimal("0.72"),
-            top_bids=(OrderBookLevel(price=Decimal("0.71"), size=Decimal("100")),),
-            top_asks=(OrderBookLevel(price=Decimal("0.72"), size=Decimal("40")),),
+            top_bids=(OrderBookLevel(price=Decimal(
+                "0.71"), size=Decimal("100")),),
+            top_asks=(OrderBookLevel(
+                price=Decimal("0.72"), size=Decimal("40")),),
         )
     )
 
@@ -131,7 +134,8 @@ def test_managed_task_runner_persists_only_first_dry_run_trigger_record(tmp_path
         task=task,
         position_provider=ManualPositionProvider(
             size=Decimal("100"), average_cost=Decimal("0.40")),
-        executor=ExitExecutor(gateway=FakeSellGateway(), slippage_bps=Decimal("50")),
+        executor=ExitExecutor(gateway=FakeSellGateway(),
+                              slippage_bps=Decimal("50")),
     )
     quote = QuoteSnapshot(
         best_bid=Decimal("0.71"),
@@ -349,7 +353,7 @@ async def test_managed_task_runtime_prefetches_quote_before_stream(tmp_path) -> 
     sequence: list[str] = []
 
     class IdleMarketStream:
-        async def pump_quotes(self, *, stop_event, on_quote) -> None:
+        async def pump_quotes(self, *, stop_event, on_quote, on_heartbeat=None) -> None:
             sequence.append("stream")
             await stop_event.wait()
 
@@ -359,7 +363,8 @@ async def test_managed_task_runtime_prefetches_quote_before_stream(tmp_path) -> 
             task=managed_task,
             position_provider=ManualPositionProvider(
                 size=Decimal("100"), average_cost=Decimal("0.40")),
-            executor=ExitExecutor(gateway=FakeSellGateway(), slippage_bps=Decimal("50")),
+            executor=ExitExecutor(gateway=FakeSellGateway(),
+                                  slippage_bps=Decimal("50")),
         )
 
     def load_quote(token_id: str) -> QuoteSnapshot:
@@ -368,8 +373,10 @@ async def test_managed_task_runtime_prefetches_quote_before_stream(tmp_path) -> 
             market_id="0xmarket-prefetch",
             best_bid=Decimal("0.71"),
             best_ask=Decimal("0.72"),
-            top_bids=(OrderBookLevel(price=Decimal("0.71"), size=Decimal("100")),),
-            top_asks=(OrderBookLevel(price=Decimal("0.72"), size=Decimal("40")),),
+            top_bids=(OrderBookLevel(price=Decimal(
+                "0.71"), size=Decimal("100")),),
+            top_asks=(OrderBookLevel(
+                price=Decimal("0.72"), size=Decimal("40")),),
         )
 
     runtime = ManagedTaskRuntime(
@@ -441,8 +448,10 @@ async def test_managed_task_runtime_reconciles_tracked_orders_after_user_disconn
                 market_id="0xmarket-1",
                 best_bid=Decimal("0.71"),
                 best_ask=Decimal("0.72"),
-                top_bids=(OrderBookLevel(price=Decimal("0.71"), size=Decimal("100")),),
-                top_asks=(OrderBookLevel(price=Decimal("0.72"), size=Decimal("40")),),
+                top_bids=(OrderBookLevel(price=Decimal(
+                    "0.71"), size=Decimal("100")),),
+                top_asks=(OrderBookLevel(
+                    price=Decimal("0.72"), size=Decimal("40")),),
             ),
         ),
         runner_factory=build_runner,
@@ -507,8 +516,10 @@ async def test_runtime_enforces_single_instance_lease(tmp_path) -> None:
         runner_factory=lambda task: ManagedTaskRunner(
             service=first_service,
             task=task,
-            position_provider=ManualPositionProvider(size=Decimal("100"), average_cost=Decimal("0.40")),
-            executor=ExitExecutor(gateway=FakeSellGateway(), slippage_bps=Decimal("50")),
+            position_provider=ManualPositionProvider(
+                size=Decimal("100"), average_cost=Decimal("0.40")),
+            executor=ExitExecutor(gateway=FakeSellGateway(),
+                                  slippage_bps=Decimal("50")),
         ),
     )
     runtime_two = ManagedTaskRuntime(
@@ -517,8 +528,10 @@ async def test_runtime_enforces_single_instance_lease(tmp_path) -> None:
         runner_factory=lambda task: ManagedTaskRunner(
             service=second_service,
             task=task,
-            position_provider=ManualPositionProvider(size=Decimal("100"), average_cost=Decimal("0.40")),
-            executor=ExitExecutor(gateway=FakeSellGateway(), slippage_bps=Decimal("50")),
+            position_provider=ManualPositionProvider(
+                size=Decimal("100"), average_cost=Decimal("0.40")),
+            executor=ExitExecutor(gateway=FakeSellGateway(),
+                                  slippage_bps=Decimal("50")),
         ),
     )
 
@@ -534,7 +547,8 @@ async def test_runtime_pauses_task_when_market_data_stales(tmp_path) -> None:
     task = service.create_task(
         token_id="token-stale",
         rules=(
-            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("25"), trigger_price=Decimal("0.90")),
+            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal(
+                "25"), trigger_price=Decimal("0.90")),
         ),
         dry_run=True,
         slippage_bps=Decimal("50"),
@@ -546,8 +560,10 @@ async def test_runtime_pauses_task_when_market_data_stales(tmp_path) -> None:
         runner_factory=lambda managed_task: ManagedTaskRunner(
             service=service,
             task=managed_task,
-            position_provider=ManualPositionProvider(size=Decimal("100"), average_cost=Decimal("0.40")),
-            executor=ExitExecutor(gateway=FakeSellGateway(), slippage_bps=Decimal("50")),
+            position_provider=ManualPositionProvider(
+                size=Decimal("100"), average_cost=Decimal("0.40")),
+            executor=ExitExecutor(gateway=FakeSellGateway(),
+                                  slippage_bps=Decimal("50")),
         ),
         market_stale_pause_seconds=0.05,
         maintenance_interval_seconds=0.02,
@@ -571,7 +587,8 @@ async def test_runtime_restores_prepared_attempts_as_needing_review(tmp_path) ->
     task = service.create_task(
         token_id="token-prepared",
         rules=(
-            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("25"), trigger_price=Decimal("0.70")),
+            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal(
+                "25"), trigger_price=Decimal("0.70")),
         ),
         dry_run=False,
         slippage_bps=Decimal("50"),
@@ -594,8 +611,10 @@ async def test_runtime_restores_prepared_attempts_as_needing_review(tmp_path) ->
         runner_factory=lambda managed_task: ManagedTaskRunner(
             service=service,
             task=managed_task,
-            position_provider=ManualPositionProvider(size=Decimal("100"), average_cost=Decimal("0.40")),
-            executor=ExitExecutor(gateway=FakeSellGateway(), slippage_bps=Decimal("50")),
+            position_provider=ManualPositionProvider(
+                size=Decimal("100"), average_cost=Decimal("0.40")),
+            executor=ExitExecutor(gateway=FakeSellGateway(),
+                                  slippage_bps=Decimal("50")),
         ),
     )
 
@@ -618,7 +637,8 @@ async def test_runtime_pauses_task_when_user_updates_stale(tmp_path) -> None:
     task = service.create_task(
         token_id="token-user-stale",
         rules=(
-            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("25"), trigger_price=Decimal("0.70")),
+            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal(
+                "25"), trigger_price=Decimal("0.70")),
         ),
         dry_run=False,
         slippage_bps=Decimal("50"),
@@ -628,9 +648,11 @@ async def test_runtime_pauses_task_when_user_updates_stale(tmp_path) -> None:
         return ManagedTaskRunner(
             service=service,
             task=managed_task,
-            position_provider=ManualPositionProvider(size=Decimal("100"), average_cost=Decimal("0.40")),
+            position_provider=ManualPositionProvider(
+                size=Decimal("100"), average_cost=Decimal("0.40")),
             executor=ExitExecutor(
-                gateway=FakeSellGateway(fill_size="0", order_id="order-1", status="live"),
+                gateway=FakeSellGateway(
+                    fill_size="0", order_id="order-1", status="live"),
                 slippage_bps=Decimal("50"),
             ),
         )
@@ -643,8 +665,10 @@ async def test_runtime_pauses_task_when_user_updates_stale(tmp_path) -> None:
                 market_id="0xmarket-1",
                 best_bid=Decimal("0.71"),
                 best_ask=Decimal("0.72"),
-                top_bids=(OrderBookLevel(price=Decimal("0.71"), size=Decimal("100")),),
-                top_asks=(OrderBookLevel(price=Decimal("0.72"), size=Decimal("40")),),
+                top_bids=(OrderBookLevel(price=Decimal(
+                    "0.71"), size=Decimal("100")),),
+                top_asks=(OrderBookLevel(
+                    price=Decimal("0.72"), size=Decimal("40")),),
             ),
         ),
         runner_factory=build_runner,

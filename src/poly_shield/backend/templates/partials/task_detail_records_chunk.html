@@ -1,0 +1,50 @@
+{% macro event_type_label(et) %}
+{% if et == "prepared" %}👁 prepared
+{% elif et == "submitted" %}📤 submitted
+{% elif et == "confirmed" %}✅ confirmed
+{% elif et == "failed" %}❌ failed
+{% elif et == "system" %}⚙ 系统
+{% else %}{{ et }}{% endif %}
+{% endmacro %}
+
+{% if records %}
+{% for rec in records %}
+<div class="tl-entry ev-{{ rec.event_type }}">
+    <div class="tl-ts">{{ rec.created_at.strftime("%m-%d %H:%M:%S") }}</div>
+    <div class="tl-type">{{ event_type_label(rec.event_type) }}</div>
+    <div class="tl-msg">{{ rec.message }}</div>
+    <div class="tl-prices">
+        {% if rec.trigger_price and rec.trigger_price != "0" %}
+        <span>触发价 {{ format_cents(rec.trigger_price) }}</span>
+        {% endif %}
+        {% if rec.best_bid and rec.best_bid != "0" %}
+        <span>最优买价 {{ format_cents(rec.best_bid) }}</span>
+        {% endif %}
+        {% if rec.best_ask and rec.best_ask != "0" %}
+        <span>最优卖价 {{ format_cents(rec.best_ask) }}</span>
+        {% endif %}
+        {% if rec.requested_size and rec.requested_size != "0" %}
+        <span>请求量 {{ rec.requested_size }}</span>
+        {% endif %}
+        {% if rec.filled_size and rec.filled_size != "0" %}
+        <span>成交量 {{ rec.filled_size }}</span>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+{% elif next_offset == 0 %}
+<div class="empty-state">
+    <i class="bi bi-hourglass"></i>
+    <p>尚无执行记录</p>
+</div>
+{% endif %}
+
+{% if has_more %}
+<div class="tl-load-more" hx-get="/ui/panels/task_detail/{{ task_id }}/records" hx-trigger="revealed" hx-target="this"
+    hx-swap="outerHTML" hx-vals='{"rule_name":"{{ rule_name }}", "offset":"{{ next_offset }}", "limit":"{{ limit }}"}'>
+    <div class="empty-state" style="padding:8px 0 4px">
+        <i class="bi bi-arrow-repeat"></i>
+        <p>向下滚动加载更多</p>
+    </div>
+</div>
+{% endif %}

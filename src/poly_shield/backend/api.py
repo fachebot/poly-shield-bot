@@ -2,7 +2,6 @@ from __future__ import annotations
 
 """FastAPI 后端接口，供 CLI 和 Telegram 复用。"""
 
-from collections import defaultdict
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -24,6 +23,7 @@ from poly_shield.rules import ExitRule, RuleKind, RuleState
 
 
 PERCENT_PNL_QUANTUM = Decimal("0.00000001")
+TASK_DETAIL_RECORD_PAGE_SIZE = 20
 
 
 class RulePayload(BaseModel):
@@ -218,6 +218,24 @@ def create_app(
             return position_reader
         return PolymarketGateway(PolymarketCredentials.from_env())
 
+    def _load_live_positions() -> tuple[list[PositionRecord], str | None]:
+        try:
+            reader = get_position_reader()
+            positions = reader.list_positions(size_threshold=Decimal("0"))
+            positions = _prefer_best_bid_prices(reader, positions)
+            return positions, None
+        except PolymarketConfigurationError:
+            return [], "config"
+        except PolymarketRequestError:
+            return [], "network"
+
+    def _is_archived_token(token_id: str) -> bool:
+        positions, positions_error = _load_live_positions()
+        if positions_error is not None:
+            # Fail-open to avoid accidentally blocking edits when position service is unavailable.
+            return False
+        return token_id not in {position.token_id for position in positions}
+
     @app.get("/health")
     def health() -> dict[str, object]:
         payload = {
@@ -326,12 +344,16 @@ def create_app(
     def list_records(
         task_id: str | None = None,
         token_id: str | None = None,
+        rule_name: str | None = None,
         limit: int = Query(default=100, ge=1, le=1000),
+        offset: int = Query(default=0, ge=0),
     ) -> list[ExecutionRecordResponse]:
         records = service.list_execution_records(
             task_id=task_id,
             token_id=token_id,
+            rule_name=rule_name,
             limit=limit,
+            offset=offset,
         )
         return [_serialize_record(record) for record in records]
 
@@ -465,20 +487,12 @@ def create_app(
         })
 
     @app.get("/ui/panels/positions", response_class=HTMLResponse, include_in_schema=False)
-    def ui_positions(request: Request) -> HTMLResponse:
-        positions_error: str | None = None
-        try:
-            reader = get_position_reader()
-            raw_positions = reader.list_positions(size_threshold=Decimal("0"))
-            raw_positions = _prefer_best_bid_prices(reader, raw_positions)
-        except PolymarketConfigurationError:
-            raw_positions = []
-            positions_error = "config"
-        except PolymarketRequestError:
-            raw_positions = []
-            positions_error = "network"
+    def ui_positions(request: Request, tab: str = Query(default="active")) -> HTMLResponse:
+        current_tab = tab if tab in {"active", "archived"} else "active"
+        raw_positions, positions_error = _load_live_positions()
+        active_token_ids = {position.token_id for position in raw_positions}
 
-        positions_ctx = []
+        positions_ctx: list[dict[str, object]] = []
         for p in raw_positions:
             cash_pnl_raw = float(p.cash_pnl)
             positions_ctx.append({
@@ -492,9 +506,48 @@ def create_app(
                 "cash_pnl_raw": cash_pnl_raw,
                 "percent_pnl": str(p.percent_pnl),
                 "outcome": p.outcome,
+                "is_archived": False,
+                "task_count": 0,
             })
+
+        archived_index: dict[str, dict[str, object]] = {}
+        for task in sorted(service.list_tasks(include_deleted=False), key=lambda item: item.updated_at, reverse=True):
+            if task.token_id in active_token_ids:
+                continue
+            row = archived_index.get(task.token_id)
+            if row is None:
+                archived_index[task.token_id] = {
+                    "token_id": task.token_id,
+                    "title": task.title or f"仓位 {task.token_id[:8]}",
+                    "size": "0",
+                    "average_cost": "0",
+                    "current_price": "0",
+                    "current_value": "0",
+                    "cash_pnl": "0",
+                    "cash_pnl_raw": 0.0,
+                    "percent_pnl": "0",
+                    "outcome": None,
+                    "is_archived": True,
+                    "task_count": 1,
+                    "updated_at": task.updated_at,
+                }
+            else:
+                row["task_count"] = int(row["task_count"]) + 1
+                if not row.get("title") and task.title:
+                    row["title"] = task.title
+
+        archived_positions = sorted(
+            archived_index.values(),
+            key=lambda item: item["updated_at"],
+            reverse=True,
+        )
+
+        visible_positions = archived_positions if current_tab == "archived" else positions_ctx
         return _templates.TemplateResponse(request, "partials/positions.html", {
-            "positions": positions_ctx,
+            "positions": visible_positions,
+            "active_count": len(positions_ctx),
+            "archived_count": len(archived_positions),
+            "current_tab": current_tab,
             "positions_error": positions_error,
         })
 
@@ -507,26 +560,32 @@ def create_app(
         selected_position_url = ""
         selected_position_outcome: str | None = None
         selected_position_price = ""
+        is_archived_position = False
         if token_filter:
-            try:
-                reader = get_position_reader()
-                positions_for_filter = reader.list_positions(
-                    size_threshold=Decimal("0"))
-                positions_for_filter = _prefer_best_bid_prices(
-                    reader, positions_for_filter)
-                for pos in positions_for_filter:
-                    if pos.token_id != token_filter:
-                        continue
-                    selected_position_title = (pos.title or "").strip()
-                    selected_position_url = _build_polymarket_url(
-                        event_slug=pos.event_slug,
-                        slug=pos.slug,
-                    ) or ""
-                    selected_position_outcome = pos.outcome
-                    selected_position_price = str(pos.current_price)
-                    break
-            except Exception:
-                pass
+            positions_for_filter, positions_error = _load_live_positions()
+            if positions_error is None:
+                is_archived_position = token_filter not in {
+                    position.token_id for position in positions_for_filter
+                }
+            for pos in positions_for_filter:
+                if pos.token_id != token_filter:
+                    continue
+                selected_position_title = (pos.title or "").strip()
+                selected_position_url = _build_polymarket_url(
+                    event_slug=pos.event_slug,
+                    slug=pos.slug,
+                ) or ""
+                selected_position_outcome = pos.outcome
+                selected_position_price = str(pos.current_price)
+                break
+            if is_archived_position:
+                token_tasks = service.list_tasks(
+                    include_deleted=False, token_id=token_filter)
+                if token_tasks:
+                    latest_task = max(
+                        token_tasks, key=lambda item: item.updated_at)
+                    selected_position_title = (
+                        latest_task.title or "").strip() or token_filter
         tasks = service.list_tasks(
             status=status_filter, include_deleted=False, token_id=token_filter)
         tasks_with_states = [_serialize_task(
@@ -549,6 +608,7 @@ def create_app(
             "selected_position_url": selected_position_url,
             "selected_position_outcome": selected_position_outcome,
             "selected_position_price": selected_position_price,
+            "is_archived_position": is_archived_position,
         })
 
     @app.get("/ui/panels/task_detail/{task_id}", response_class=HTMLResponse, include_in_schema=False)
@@ -558,19 +618,50 @@ def create_app(
         except TaskNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         task_ctx = _serialize_task(task, service.load_rule_states(task_id))
-        records = service.list_execution_records(task_id=task_id, limit=200)
-        records_by_rule: dict[str, list] = defaultdict(list)
-        for rec in records:
-            records_by_rule[rec.rule_name].append(rec)
         return _templates.TemplateResponse(request, "partials/task_detail.html", {
             "task": task_ctx,
-            "records_by_rule": dict(records_by_rule),
+            "record_page_size": TASK_DETAIL_RECORD_PAGE_SIZE,
+            "is_archived_position": _is_archived_token(task.token_id),
+        })
+
+    @app.get("/ui/panels/task_detail/{task_id}/records", response_class=HTMLResponse, include_in_schema=False)
+    def ui_task_detail_records(
+        request: Request,
+        task_id: str,
+        rule_name: str,
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=TASK_DETAIL_RECORD_PAGE_SIZE, ge=1, le=100),
+    ) -> HTMLResponse:
+        try:
+            service.get_task(task_id)
+        except TaskNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        records = service.list_execution_records(
+            task_id=task_id,
+            rule_name=rule_name,
+            limit=limit + 1,
+            offset=offset,
+        )
+        has_more = len(records) > limit
+        page_records = records[:limit]
+        return _templates.TemplateResponse(request, "partials/task_detail_records_chunk.html", {
+            "task_id": task_id,
+            "rule_name": rule_name,
+            "records": page_records,
+            "next_offset": offset + len(page_records),
+            "limit": limit,
+            "has_more": has_more,
         })
 
     @app.get("/ui/modals/create_task", response_class=HTMLResponse, include_in_schema=False)
     def ui_create_task_modal(request: Request, token_id: str | None = None) -> HTMLResponse:
         prefill: dict | None = None
         if token_id and token_id.strip():
+            if _is_archived_token(token_id.strip()):
+                return _templates.TemplateResponse(request, "partials/task_create_modal.html", {
+                    "error": "存档仓位为只读，不允许创建任务。若已重新建仓，请刷新仓位列表后在活跃仓位中操作。",
+                    "prefill": {"token_id": token_id.strip()},
+                })
             prefill = {"token_id": token_id.strip()}
             # Try to prefill position_size and average_cost from live positions
             try:
@@ -594,6 +685,8 @@ def create_app(
             task = service.get_task(task_id)
         except TaskNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if _is_archived_token(task.token_id):
+            raise HTTPException(status_code=409, detail="存档仓位为只读，不允许编辑任务")
         task_ctx = _serialize_task(task, service.load_rule_states(task_id))
         return _templates.TemplateResponse(request, "partials/task_edit_modal.html", {
             "task": task_ctx,
@@ -612,6 +705,12 @@ def create_app(
         if not token_id:
             return _templates.TemplateResponse(request, "partials/task_create_modal.html", {
                 "error": "Token ID 不能为空",
+                "prefill": dict(form),
+            })
+        token_tab = _field("_token_tab") or "active"
+        if _is_archived_token(token_id):
+            return _templates.TemplateResponse(request, "partials/task_create_modal.html", {
+                "error": "存档仓位为只读，不允许创建任务。若已重新建仓，请刷新仓位列表。",
                 "prefill": dict(form),
             })
 
@@ -694,8 +793,10 @@ def create_app(
             "counts": counts,
             "current_status": "",
             "token_id": token_filter_create or "",
+            "is_archived_position": _is_archived_token(token_filter_create or "") if token_filter_create else False,
         })
         response.headers["HX-Trigger"] = "taskCreated"
+        response.headers["X-Position-Tab"] = token_tab
         return response
 
     @app.put("/ui/tasks/{task_id}", response_class=HTMLResponse, include_in_schema=False)
@@ -752,6 +853,8 @@ def create_app(
 
         if not rules:
             return _render_edit_error("至少需要一条有效规则")
+        if _is_archived_token(task.token_id):
+            return _render_edit_error("存档仓位为只读，不允许编辑任务")
 
         slippage_raw = _edit_field("slippage_bps") or "50"
         position_raw = _edit_field("position_size")
@@ -773,13 +876,10 @@ def create_app(
         await refresh_runtime()
         task_ctx = _serialize_task(
             updated_task, service.load_rule_states(task_id))
-        records = service.list_execution_records(task_id=task_id, limit=200)
-        records_by_rule: dict[str, list] = defaultdict(list)
-        for rec in records:
-            records_by_rule[rec.rule_name].append(rec)
         response = _templates.TemplateResponse(request, "partials/task_detail.html", {
             "task": task_ctx,
-            "records_by_rule": dict(records_by_rule),
+            "record_page_size": TASK_DETAIL_RECORD_PAGE_SIZE,
+            "is_archived_position": _is_archived_token(updated_task.token_id),
         })
         response.headers["HX-Trigger"] = "taskUpdated, editTaskSuccess"
         return response
@@ -792,13 +892,10 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         await refresh_runtime()
         task_ctx = _serialize_task(task, service.load_rule_states(task_id))
-        records = service.list_execution_records(task_id=task_id, limit=200)
-        records_by_rule: dict[str, list] = defaultdict(list)
-        for rec in records:
-            records_by_rule[rec.rule_name].append(rec)
         response = _templates.TemplateResponse(request, "partials/task_detail.html", {
             "task": task_ctx,
-            "records_by_rule": dict(records_by_rule),
+            "record_page_size": TASK_DETAIL_RECORD_PAGE_SIZE,
+            "is_archived_position": _is_archived_token(task.token_id),
         })
         response.headers["HX-Trigger"] = "taskUpdated"
         return response
@@ -811,13 +908,10 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         await refresh_runtime()
         task_ctx = _serialize_task(task, service.load_rule_states(task_id))
-        records = service.list_execution_records(task_id=task_id, limit=200)
-        records_by_rule: dict[str, list] = defaultdict(list)
-        for rec in records:
-            records_by_rule[rec.rule_name].append(rec)
         response = _templates.TemplateResponse(request, "partials/task_detail.html", {
             "task": task_ctx,
-            "records_by_rule": dict(records_by_rule),
+            "record_page_size": TASK_DETAIL_RECORD_PAGE_SIZE,
+            "is_archived_position": _is_archived_token(task.token_id),
         })
         response.headers["HX-Trigger"] = "taskUpdated"
         return response

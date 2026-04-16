@@ -172,13 +172,17 @@ class TaskService:
         *,
         task_id: str | None = None,
         token_id: str | None = None,
+        rule_name: str | None = None,
         limit: int = 100,
+        offset: int = 0,
     ) -> list[ExecutionRecord]:
         """列出执行记录。"""
         return self.store.list_execution_records(
             task_id=task_id,
             token_id=token_id,
+            rule_name=rule_name,
             limit=limit,
+            offset=offset,
         )
 
     def list_execution_attempts(
@@ -241,7 +245,8 @@ class TaskService:
 
     def acquire_runtime_lease(self, lease_key: str, owner_id: str, ttl_seconds: int) -> RuntimeLease:
         """尝试获取运行时租约。"""
-        lease = self.store.acquire_runtime_lease(lease_key, owner_id, ttl_seconds)
+        lease = self.store.acquire_runtime_lease(
+            lease_key, owner_id, ttl_seconds)
         if lease is None:
             raise RuntimeLeaseConflictError(
                 f"runtime lease {lease_key} is already held by another instance"

@@ -32,6 +32,7 @@
 {% elif et == "submitted" %}📤 submitted
 {% elif et == "confirmed" %}✅ confirmed
 {% elif et == "failed" %}❌ failed
+{% elif et == "system" %}⚙ 系统
 {% else %}{{ et }}{% endif %}
 {% endmacro %}
 
@@ -44,7 +45,9 @@
             {% if task.dry_run %}<span class="dry-tag">DRY RUN</span>{% endif %}
         </div>
         <div style="display:flex;gap:6px">
-            {% if task.status == "active" %}
+            {% if is_archived_position %}
+            <span class="status-badge s-paused" style="font-size:11px;padding:5px 10px">存档只读</span>
+            {% elif task.status == "active" %}
             <button class="btn-ghost btn-action-pause" style="font-size:11px;padding:5px 10px"
                 hx-post="/ui/actions/tasks/{{ task.task_id }}/pause" hx-target="#task-detail" hx-swap="innerHTML"
                 hx-confirm="确定要暂停此任务吗？">
@@ -83,7 +86,6 @@
 
     <div class="timeline-list">
         {% for rule in task.rules %}
-        {% set rule_records = records_by_rule.get(rule.name, []) %}
         {% set tl_id = "tl-" ~ task.task_id[:8] ~ "-" ~ loop.index %}
         <div class="tl-group">
             <div class="tl-toggle" data-bs-toggle="collapse" data-bs-target="#{{ tl_id }}">
@@ -102,45 +104,47 @@
                     · 剩余 {{ rule.runtime_state.remaining_size }}
                     {% endif %}
                 </span>
-                <span class="tl-count">{{ rule_records | length }} 条</span>
                 <i class="bi bi-chevron-down chevron"></i>
             </div>
             <div class="collapse {% if not rule.runtime_state.is_complete %}show{% endif %}" id="{{ tl_id }}">
                 <div class="tl-body">
-                    {% if rule_records %}
-                    {% for rec in rule_records %}
-                    <div class="tl-entry ev-{{ rec.event_type }}">
-                        <div class="tl-ts">{{ rec.created_at.strftime("%m-%d %H:%M:%S") }}</div>
-                        <div class="tl-type">{{ event_type_label(rec.event_type) }}</div>
-                        <div class="tl-msg">{{ rec.message }}</div>
-                        <div class="tl-prices">
-                            {% if rec.trigger_price and rec.trigger_price != "0" %}
-                            <span>触发价 {{ format_cents(rec.trigger_price) }}</span>
-                            {% endif %}
-                            {% if rec.best_bid and rec.best_bid != "0" %}
-                            <span>最优买价 {{ format_cents(rec.best_bid) }}</span>
-                            {% endif %}
-                            {% if rec.best_ask and rec.best_ask != "0" %}
-                            <span>最优卖价 {{ format_cents(rec.best_ask) }}</span>
-                            {% endif %}
-                            {% if rec.requested_size and rec.requested_size != "0" %}
-                            <span>请求量 {{ rec.requested_size }}</span>
-                            {% endif %}
-                            {% if rec.filled_size and rec.filled_size != "0" %}
-                            <span>成交量 {{ rec.filled_size }}</span>
-                            {% endif %}
+                    <div id="tl-records-{{ task.task_id }}-{{ loop.index }}"
+                        hx-get="/ui/panels/task_detail/{{ task.task_id }}/records" hx-trigger="load" hx-target="this"
+                        hx-swap="innerHTML"
+                        hx-vals='{"rule_name":"{{ rule.name }}", "offset":"0", "limit":"{{ record_page_size }}"}'>
+                        <div class="empty-state">
+                            <i class="bi bi-arrow-repeat"></i>
+                            <p>加载中…</p>
                         </div>
                     </div>
-                    {% endfor %}
-                    {% else %}
-                    <div class="empty-state">
-                        <i class="bi bi-hourglass"></i>
-                        <p>尚无执行记录</p>
-                    </div>
-                    {% endif %}
                 </div>
             </div>
         </div>
         {% endfor %}
     </div><!-- /timeline-list -->
+
+    <div class="section-label" style="margin-top:16px">系统事件</div>
+    <div class="timeline-list">
+        <div class="tl-group">
+            <div class="tl-toggle" data-bs-toggle="collapse" data-bs-target="#tl-system-{{ task.task_id[:8] }}">
+                <span class="status-badge s-paused"><i class="bi bi-gear-fill"></i>系统</span>
+                <span class="tl-name">系统自动化事件</span>
+                <i class="bi bi-chevron-down chevron"></i>
+            </div>
+            <div class="collapse show" id="tl-system-{{ task.task_id[:8] }}">
+                <div class="tl-body" style="padding-top:4px">
+                    <div id="tl-system-records-{{ task.task_id }}"
+                        hx-get="/ui/panels/task_detail/{{ task.task_id }}/records" hx-trigger="load" hx-target="this"
+                        hx-swap="innerHTML"
+                        hx-vals='{"rule_name":"system", "offset":"0", "limit":"{{ record_page_size }}"}'>
+                        <div class="empty-state">
+                            <i class="bi bi-arrow-repeat"></i>
+                            <p>加载中…</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
 </div><!-- /detail-section -->

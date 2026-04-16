@@ -528,31 +528,68 @@
             user-select: none;
         }
 
-
-        display: flex;
-        align-items: center;
-        gap: 4px;
+        .filter-tabs {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px;
+            border-radius: 11px;
+            background: linear-gradient(180deg, #f8f8fc 0%, #efeff6 100%);
+            border: 1px solid var(--border-light);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, .85);
         }
 
         .filter-tab {
-            font-size: 14px;
+            font-size: 12px;
             font-weight: 600;
-            padding: 4px 10px;
-            border-radius: 20px;
-            border: none;
+            letter-spacing: .01em;
+            padding: 6px 11px;
+            border-radius: 8px;
+            border: 1px solid transparent;
             background: transparent;
             color: var(--text-secondary);
             cursor: pointer;
-            transition: background .12s, color .12s;
+            transition: background .16s ease, color .16s ease, border-color .16s ease, transform .16s ease;
         }
 
         .filter-tab:hover {
-            background: var(--bg-hover);
+            background: rgba(255, 255, 255, .75);
+            color: var(--text-primary);
         }
 
         .filter-tab.active {
-            background: var(--brand-mid);
+            background: #fff;
             color: var(--brand);
+            border-color: rgba(108, 92, 231, .26);
+            box-shadow: 0 1px 2px rgba(20, 20, 32, .08);
+        }
+
+        .filter-tab:disabled {
+            opacity: .58;
+            cursor: not-allowed;
+        }
+
+        .panel-loading {
+            position: absolute;
+            inset: 0;
+            background: rgba(247, 247, 248, .74);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 22;
+            border-radius: inherit;
+            backdrop-filter: blur(1.5px);
+        }
+
+        .panel-loading .board-loading-spinner {
+            width: 24px;
+            height: 24px;
+            border-width: 2.5px;
+        }
+
+        .interaction-locked {
+            pointer-events: none;
+            user-select: none;
         }
 
         .board-section {
@@ -884,6 +921,11 @@
 
         .tl-entry.ev-prepared {
             border-left-color: var(--yellow);
+        }
+
+        .tl-entry.ev-system {
+            border-left-color: var(--yellow);
+            opacity: 0.8;
         }
 
         .tl-ts {
@@ -1327,6 +1369,8 @@
             if (!toggle) return;
             const item = toggle.closest('.pos-item');
             const tokenId = item.dataset.tokenId || '';
+            const tokenTab = item.dataset.positionTab || 'active';
+            const tokenReadonly = item.dataset.readonly || '0';
             const wrap = document.getElementById('task-board-wrap');
 
             // If clicking the chevron icon, only toggle open/close without changing selection
@@ -1346,7 +1390,11 @@
                 // Select this position (deselect others)
                 document.querySelectorAll('.pos-item').forEach(i => i.classList.remove('selected'));
                 item.classList.add('selected');
-                if (wrap) wrap.dataset.tokenId = tokenId;
+                if (wrap) {
+                    wrap.dataset.tokenId = tokenId;
+                    wrap.dataset.tokenTab = tokenTab;
+                    wrap.dataset.tokenReadonly = tokenReadonly;
+                }
                 // Clear stale task detail from the previous position
                 const detail = document.getElementById('task-detail');
                 if (detail) detail.innerHTML = '';
@@ -1362,15 +1410,68 @@
         document.addEventListener('click', e => {
             const tab = e.target.closest('.filter-tab');
             if (!tab) return;
+            if (tab.disabled || tab.closest('.interaction-locked')) return;
             tab.closest('.filter-tabs').querySelectorAll('.filter-tab')
                 .forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
         });
 
         // taskDeleted: clear task detail panel and refresh board
+        let _positionsFetchController = null;
+
+        function refreshPositionsPanel() {
+            const posList = document.getElementById('pos-list');
+            if (!posList) return;
+            const activeTab = posList.querySelector('.filter-tab.active');
+            let tab = 'active';
+            if (activeTab) {
+                const vals = activeTab.getAttribute('hx-vals');
+                if (vals) {
+                    try { tab = JSON.parse(vals).tab || 'active'; } catch (_) { }
+                }
+            }
+            htmx.ajax('GET', '/ui/panels/positions?tab=' + encodeURIComponent(tab), { target: '#pos-list', swap: 'innerHTML' });
+        }
+
+        function refreshPositionsPanelSilently() {
+            const posList = document.getElementById('pos-list');
+            if (!posList) return;
+            const activeTab = posList.querySelector('.filter-tab.active');
+            let tab = 'active';
+            if (activeTab) {
+                const vals = activeTab.getAttribute('hx-vals');
+                if (vals) {
+                    try { tab = JSON.parse(vals).tab || 'active'; } catch (_) { }
+                }
+            }
+
+            if (_positionsFetchController) {
+                _positionsFetchController.abort();
+            }
+            _positionsFetchController = new AbortController();
+            const signal = _positionsFetchController.signal;
+
+            fetch('/ui/panels/positions?tab=' + encodeURIComponent(tab), { signal })
+                .then(resp => {
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                    return resp.text();
+                })
+                .then(html => {
+                    const current = document.getElementById('pos-list');
+                    if (!current) return;
+                    current.innerHTML = html;
+                    htmx.process(current);
+                })
+                .catch(err => {
+                    if (err.name === 'AbortError') return;
+                    console.warn('silent positions refresh failed:', err);
+                });
+        }
+
         document.body.addEventListener('taskDeleted', () => {
             const detail = document.getElementById('task-detail');
             if (detail) detail.innerHTML = '';
+            refreshPositionsPanel();
             refreshBoard();
         });
 
@@ -1384,6 +1485,15 @@
 
         // taskUpdated: refresh board preserving current position filter
         document.body.addEventListener('taskUpdated', () => refreshBoard());
+        document.body.addEventListener('taskCreated', () => {
+            refreshPositionsPanel();
+            refreshBoard();
+        });
+
+        // Keep active/archive tabs in sync with external position changes (e.g. user reopens a position).
+        setInterval(() => {
+            refreshPositionsPanelSilently();
+        }, 15000);
 
         function syncDollarFieldsFromCents(form) {
             if (!form) return;
@@ -1402,25 +1512,61 @@
             });
         }
 
-        // Populate the hidden _token_filter before create-task form submission
-        document.addEventListener('htmx:beforeRequest', e => {
+        // htmx:configRequest fires after form data is collected but BEFORE sending;
+        // modifying e.detail.parameters here correctly overrides submitted values.
+        function syncCentsToParams(form, params) {
+            if (!form || !params) return;
+            form.querySelectorAll('[data-dollar-target]').forEach(input => {
+                const targetName = input.dataset.dollarTarget;
+                const raw = (input.value || '').trim();
+                if (!raw) {
+                    params[targetName] = '';
+                    return;
+                }
+                const cents = Number(raw);
+                if (!Number.isFinite(cents)) return;
+                params[targetName] = (cents / 100).toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
+            });
+        }
+
+        // Populate token filter and convert cents→dollars for create-task form
+        document.addEventListener('htmx:configRequest', e => {
             const form = e.target.closest('#createTaskForm');
             if (!form) return;
             const wrap = document.getElementById('task-board-wrap');
-            const tokenFilter = form.querySelector('#createTokenFilter');
-            if (tokenFilter && wrap) tokenFilter.value = wrap.dataset.tokenId || '';
-            syncDollarFieldsFromCents(form);
+            e.detail.parameters['_token_filter'] = wrap ? (wrap.dataset.tokenId || '') : '';
+            e.detail.parameters['_token_tab'] = wrap ? (wrap.dataset.tokenTab || 'active') : 'active';
+            syncCentsToParams(form, e.detail.parameters);
         });
 
-        document.addEventListener('htmx:beforeRequest', e => {
+        // Convert cents→dollars for edit-task form
+        document.addEventListener('htmx:configRequest', e => {
             const form = e.target.closest('#editTaskForm');
             if (!form) return;
-            syncDollarFieldsFromCents(form);
+            syncCentsToParams(form, e.detail.parameters);
         });
 
         // ── Board loading overlay helpers ─────────────────────────────
+        function panelShowLoading(container) {
+            if (!container || container.querySelector('.panel-loading')) return;
+            container.classList.add('interaction-locked');
+            container.querySelectorAll('.filter-tab').forEach(btn => btn.disabled = true);
+            const ov = document.createElement('div');
+            ov.className = 'panel-loading';
+            ov.innerHTML = '<div class="board-loading-spinner"></div>';
+            container.appendChild(ov);
+        }
+
+        function panelHideLoading(container) {
+            if (!container) return;
+            container.classList.remove('interaction-locked');
+            container.querySelectorAll('.filter-tab').forEach(btn => btn.disabled = false);
+            container.querySelectorAll('.panel-loading').forEach(el => el.remove());
+        }
+
         function boardShowLoading(wrap) {
             if (!wrap || wrap.querySelector('.board-loading-overlay')) return;
+            wrap.classList.add('interaction-locked');
             const ov = document.createElement('div');
             ov.className = 'board-loading-overlay';
             ov.innerHTML = '<div class="board-loading-spinner"></div>';
@@ -1429,6 +1575,7 @@
 
         function boardHideLoading(wrap) {
             if (!wrap) return;
+            wrap.classList.remove('interaction-locked');
             wrap.querySelectorAll('.board-loading-overlay').forEach(el => el.remove());
         }
 
@@ -1440,11 +1587,13 @@
             const wrap = document.getElementById('task-board-wrap');
             if (!wrap) return;
             const tokenId = wrap.dataset.tokenId || '';
+            const tokenTab = wrap.dataset.tokenTab || 'active';
 
             // No position selected — show the "please select a position" placeholder
             if (!tokenId) {
                 // Cancel any in-flight request first
                 if (_boardFetchController) { _boardFetchController.abort(); _boardFetchController = null; }
+                boardHideLoading(wrap);
                 wrap.innerHTML = `
                     <div class="workspace-header">
                         <div class="filter-tabs">
@@ -1489,7 +1638,10 @@
                     if (!currentWrap) return;
                     // Guard: discard response if user has already switched to a different position
                     if (currentWrap.dataset.tokenId !== requestedTokenId) return;
+                    boardHideLoading(currentWrap);
                     currentWrap.innerHTML = html;
+                    currentWrap.dataset.tokenId = requestedTokenId;
+                    currentWrap.dataset.tokenTab = tokenTab;
                     // Re-bind HTMX attributes on the newly injected content
                     htmx.process(currentWrap);
                 })
@@ -1550,6 +1702,11 @@
                 btnStartLoading(trigger);
                 _htmxLoadingEls.add(trigger);
             }
+
+            const target = e.detail.target;
+            if (target && (target.id === 'pos-list' || target.id === 'task-board-wrap')) {
+                panelShowLoading(target);
+            }
         });
 
         function _htmxRestoreBtn(e) {
@@ -1562,10 +1719,14 @@
 
         document.addEventListener('htmx:afterRequest', e => {
             _htmxRestoreBtn(e);
+            const target = e.detail.target;
             const xhr = e.detail.xhr;
             if (!xhr) return;
             // Show error toast for non-2xx responses
             if (xhr.status >= 400) {
+                if (target && (target.id === 'pos-list' || target.id === 'task-board-wrap')) {
+                    panelHideLoading(target);
+                }
                 let msg = `请求失败（${xhr.status}）`;
                 try {
                     const body = JSON.parse(xhr.responseText);
@@ -1579,16 +1740,28 @@
 
         document.addEventListener('htmx:sendError', e => {
             _htmxRestoreBtn(e);
+            const target = e.detail.target;
+            if (target && (target.id === 'pos-list' || target.id === 'task-board-wrap')) {
+                panelHideLoading(target);
+            }
             showToast('网络请求失败，请检查连接', 'error');
         });
 
         document.addEventListener('htmx:timeout', e => {
             _htmxRestoreBtn(e);
+            const target = e.detail.target;
+            if (target && (target.id === 'pos-list' || target.id === 'task-board-wrap')) {
+                panelHideLoading(target);
+            }
             showToast('请求超时，请重试', 'error');
         });
 
         // Auto-dismiss server-rendered success toasts (injected by partial responses)
         document.addEventListener('htmx:afterSwap', e => {
+            const target = e.detail.target;
+            if (target && (target.id === 'pos-list' || target.id === 'task-board-wrap')) {
+                panelHideLoading(target);
+            }
             const area = document.getElementById('toast-area');
             if (!area) return;
             area.querySelectorAll('.poly-toast').forEach(t => {

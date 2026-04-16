@@ -159,7 +159,8 @@ class SQLiteTaskStore:
             clauses.append("task_id = ?")
             parameters.append(task_id)
         if statuses:
-            clauses.append("status IN ({})".format(", ".join("?" for _ in statuses)))
+            clauses.append("status IN ({})".format(
+                ", ".join("?" for _ in statuses)))
             parameters.extend(status.value for status in statuses)
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
@@ -221,7 +222,8 @@ class SQLiteTaskStore:
                 (target_status, _to_iso(updated_at), task_id),
             )
             if states is not None:
-                connection.execute("DELETE FROM task_states WHERE task_id = ?", (task_id,))
+                connection.execute(
+                    "DELETE FROM task_states WHERE task_id = ?", (task_id,))
                 connection.executemany(
                     """
                     INSERT INTO task_states (
@@ -238,14 +240,18 @@ class SQLiteTaskStore:
                         (
                             task_id,
                             persisted_state.rule_name,
-                            None if persisted_state.locked_size is None else str(persisted_state.locked_size),
+                            None if persisted_state.locked_size is None else str(
+                                persisted_state.locked_size),
                             str(persisted_state.sold_size),
-                            None if persisted_state.trigger_bid is None else str(persisted_state.trigger_bid),
-                            None if persisted_state.peak_bid is None else str(persisted_state.peak_bid),
+                            None if persisted_state.trigger_bid is None else str(
+                                persisted_state.trigger_bid),
+                            None if persisted_state.peak_bid is None else str(
+                                persisted_state.peak_bid),
                             _to_iso(persisted_state.updated_at),
                         )
                         for persisted_state in [
-                            PersistedRuleState.from_rule_state(rule_name, state)
+                            PersistedRuleState.from_rule_state(
+                                rule_name, state)
                             for rule_name, state in states.items()
                         ]
                     ],
@@ -323,7 +329,8 @@ class SQLiteTaskStore:
                     INSERT INTO runtime_leases (lease_key, owner_id, expires_at, updated_at)
                     VALUES (?, ?, ?, ?)
                     """,
-                    (lease_key, owner_id, _to_iso(datetime.fromtimestamp(expires_at, now.tzinfo)), _to_iso(now)),
+                    (lease_key, owner_id, _to_iso(datetime.fromtimestamp(
+                        expires_at, now.tzinfo)), _to_iso(now)),
                 )
             else:
                 current_expires_at = _from_iso(row["expires_at"])
@@ -335,7 +342,8 @@ class SQLiteTaskStore:
                     SET owner_id = ?, expires_at = ?, updated_at = ?
                     WHERE lease_key = ?
                     """,
-                    (owner_id, _to_iso(datetime.fromtimestamp(expires_at, now.tzinfo)), _to_iso(now), lease_key),
+                    (owner_id, _to_iso(datetime.fromtimestamp(
+                        expires_at, now.tzinfo)), _to_iso(now), lease_key),
                 )
             return RuntimeLease(
                 lease_key=lease_key,
@@ -347,7 +355,8 @@ class SQLiteTaskStore:
     def renew_runtime_lease(self, lease_key: str, owner_id: str, ttl_seconds: int) -> RuntimeLease | None:
         """续租；如果租约已不属于当前实例，则返回 None。"""
         now = utc_now()
-        expires_at = datetime.fromtimestamp(now.timestamp() + ttl_seconds, now.tzinfo)
+        expires_at = datetime.fromtimestamp(
+            now.timestamp() + ttl_seconds, now.tzinfo)
         with self._connect() as connection:
             cursor = connection.execute(
                 """
@@ -489,7 +498,8 @@ class SQLiteTaskStore:
             )
             if cursor.rowcount != 1:
                 raise KeyError(f"unknown task_id: {task_id}")
-            connection.execute("DELETE FROM task_rules WHERE task_id = ?", (task_id,))
+            connection.execute(
+                "DELETE FROM task_rules WHERE task_id = ?", (task_id,))
             connection.executemany(
                 """
                 INSERT INTO task_rules (
@@ -508,14 +518,17 @@ class SQLiteTaskStore:
                         rule.name,
                         rule.kind.value,
                         str(rule.sell_size),
-                        None if rule.trigger_price is None else str(rule.trigger_price),
-                        None if rule.drawdown_ratio is None else str(rule.drawdown_ratio),
+                        None if rule.trigger_price is None else str(
+                            rule.trigger_price),
+                        None if rule.drawdown_ratio is None else str(
+                            rule.drawdown_ratio),
                         rule.label,
                     )
                     for rule in rules
                 ],
             )
-            connection.execute("DELETE FROM task_states WHERE task_id = ?", (task_id,))
+            connection.execute(
+                "DELETE FROM task_states WHERE task_id = ?", (task_id,))
         task = self.get_task(task_id)
         assert task is not None
         return task
@@ -634,7 +647,9 @@ class SQLiteTaskStore:
         *,
         task_id: str | None = None,
         token_id: str | None = None,
+        rule_name: str | None = None,
         limit: int = 100,
+        offset: int = 0,
     ) -> list[ExecutionRecord]:
         """查询执行审计记录。"""
         query = """
@@ -651,10 +666,14 @@ class SQLiteTaskStore:
         if token_id is not None:
             clauses.append("token_id = ?")
             parameters.append(token_id)
+        if rule_name is not None:
+            clauses.append("rule_name = ?")
+            parameters.append(rule_name)
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
-        query += " ORDER BY created_at DESC LIMIT ?"
+        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
         parameters.append(limit)
+        parameters.append(offset)
         with self._connect() as connection:
             rows = connection.execute(query, parameters).fetchall()
         return [
