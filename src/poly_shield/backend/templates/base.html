@@ -1,0 +1,1615 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{% block title %}Poly Shield — 控制台{% endblock %}</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet" />
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+    {% block extra_head %}{% endblock %}
+    <style>
+        :root {
+            --bg-page: #f7f7f8;
+            --bg-card: #ffffff;
+            --bg-hover: #f2f2f5;
+            --bg-input: #ffffff;
+            --bg-tag: #f2f2f5;
+            --border-light: #e8e8ec;
+            --border-mid: #d4d4de;
+            --text-primary: #0d0d12;
+            --text-secondary: #6b6b80;
+            --text-muted: #a0a0b0;
+            --brand: #6c5ce7;
+            --brand-light: rgba(108, 92, 231, .1);
+            --brand-mid: rgba(108, 92, 231, .18);
+            --green: #16b364;
+            --green-light: rgba(22, 179, 100, .1);
+            --red: #f04438;
+            --red-light: rgba(240, 68, 56, .1);
+            --yellow: #f79009;
+            --yellow-light: rgba(247, 144, 9, .1);
+            --blue: #2e90fa;
+            --blue-light: rgba(46, 144, 250, .1);
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 14px;
+            --radius-xl: 18px;
+            --shadow-card: 0 1px 3px rgba(0, 0, 0, .06), 0 1px 2px rgba(0, 0, 0, .04);
+            --shadow-panel: 0 2px 8px rgba(0, 0, 0, .07), 0 1px 3px rgba(0, 0, 0, .05);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background: var(--bg-page);
+            color: var(--text-primary);
+            font-family: 'Inter', 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+            font-size: 16px;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        ::-webkit-scrollbar {
+            width: 5px;
+            height: 5px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-mid);
+            border-radius: 4px;
+        }
+
+        /* ── NAV ─────────────────────────────── */
+        .topnav {
+            height: 52px;
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border-light);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: sticky;
+            top: 0;
+            z-index: 200;
+        }
+
+        .topnav-inner {
+            width: 100%;
+            max-width: 1600px;
+            padding: 0 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 700;
+            font-size: 16px;
+            letter-spacing: -.3px;
+            color: var(--text-primary);
+            text-decoration: none;
+        }
+
+        .nav-brand-icon {
+            width: 28px;
+            height: 28px;
+            background: var(--brand);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            color: #fff;
+        }
+
+        .nav-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* ── PAGE ────────────────────────────── */
+        .page-wrap {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 20px 24px 40px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        /* ── CARD / PANEL ────────────────────── */
+        .card-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-card);
+            overflow: hidden;
+        }
+
+        .panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 18px 13px;
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        .panel-title {
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+        }
+
+        /* ── OVERVIEW ────────────────────────── */
+        .overview-body {
+            padding: 18px 20px 16px;
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+        }
+
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 0 18px 0 0;
+        }
+
+        .stat-item+.stat-item {
+            padding-left: 18px;
+            border-left: 1px solid var(--border-light);
+        }
+
+        .stat-label {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            letter-spacing: .04em;
+        }
+
+        .stat-value {
+            font-size: 21px;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            letter-spacing: -.5px;
+        }
+
+        .stat-sub {
+            display: inline-flex;
+            align-items: center;
+            gap: 2px;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 1px 6px;
+            border-radius: 20px;
+            width: fit-content;
+        }
+
+        .pos {
+            color: var(--green);
+            background: var(--green-light);
+        }
+
+        .neg {
+            color: var(--red);
+            background: var(--red-light);
+        }
+
+        .neu {
+            color: var(--text-secondary);
+            background: var(--bg-tag);
+        }
+
+        .val-pos {
+            color: var(--green);
+        }
+
+        .val-neg {
+            color: var(--red);
+        }
+
+        /* ── HEALTH ──────────────────────────── */
+        .health-body {
+            padding: 4px 0;
+        }
+
+        .health-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 9px 18px;
+        }
+
+        .health-row+.health-row {
+            border-top: 1px solid var(--border-light);
+        }
+
+        .h-key {
+            font-size: 13px;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .h-val {
+            font-size: 13px;
+            font-weight: 500;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .dot-green {
+            background: var(--green);
+        }
+
+        .dot-yellow {
+            background: var(--yellow);
+        }
+
+        .dot-red {
+            background: var(--red);
+        }
+
+        .dot-gray {
+            background: var(--border-mid);
+        }
+
+        /* ── MAIN LAYOUT ─────────────────────── */
+        .main-layout {
+            display: grid;
+            grid-template-columns: 340px 1fr;
+            gap: 16px;
+            align-items: start;
+        }
+
+        /* ── POSITIONS ───────────────────────── */
+        .pos-list {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .pos-item {
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        .pos-item:last-child {
+            border-bottom: none;
+        }
+
+        .pos-toggle {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            cursor: pointer;
+            user-select: none;
+            transition: background .1s;
+        }
+
+        .pos-toggle:hover {
+            background: var(--bg-hover);
+        }
+
+        .pos-item.selected>.pos-toggle {
+            background: var(--brand-light);
+        }
+
+        .pos-item.selected>.pos-toggle .pos-name {
+            color: var(--brand);
+        }
+
+        .pos-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: var(--brand-light);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--brand);
+            flex-shrink: 0;
+        }
+
+        .pos-main {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .pos-name {
+            font-size: 14px;
+            font-weight: 600;
+            white-space: normal;
+            word-break: break-word;
+            line-height: 1.3;
+        }
+
+        .pos-sub {
+            font-size: 12px;
+            color: var(--text-secondary);
+            font-family: 'JetBrains Mono', monospace;
+            margin-top: 1px;
+        }
+
+        .pos-right {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 3px;
+            flex-shrink: 0;
+        }
+
+        .outcome-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 20px;
+            letter-spacing: .04em;
+        }
+
+        .pill-yes {
+            background: var(--green-light);
+            color: var(--green);
+        }
+
+        .pill-no {
+            background: var(--red-light);
+            color: var(--red);
+        }
+
+        .pos-pnl {
+            font-size: 13px;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .chevron {
+            font-size: 10px;
+            color: var(--text-muted);
+            transition: transform .18s;
+            margin-left: 2px;
+        }
+
+        .pos-item.open .chevron {
+            transform: rotate(180deg);
+        }
+
+        .pos-detail {
+            padding: 6px 16px 14px 58px;
+            background: var(--bg-hover);
+            display: none;
+        }
+
+        .pos-item.open .pos-detail {
+            display: block;
+        }
+
+        .pd-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            padding: 5px 0;
+        }
+
+        .pd-row .k {
+            color: var(--text-secondary);
+        }
+
+        .pd-row .v {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 500;
+        }
+
+        /* ── WORKSPACE ───────────────────────── */
+        .workspace-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 18px 11px;
+            border-bottom: 1px solid var(--border-light);
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        /* ── POSITION CONTEXT BAR ─────────── */
+        .pos-context-bar {
+            padding: 10px 18px 10px;
+            background: var(--bg-page);
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        .pcb-body {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            min-width: 0;
+        }
+
+        .pcb-title-row {
+            display: flex;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            gap: 6px;
+            min-width: 0;
+        }
+
+        .pcb-title-link,
+        .pcb-title-text {
+            font-size: 14px;
+            font-weight: 600;
+            line-height: 1.45;
+            word-break: break-word;
+            color: var(--brand);
+            text-decoration: none;
+        }
+
+        .pcb-title-link:visited {
+            color: var(--brand);
+        }
+
+        .pcb-title-link:hover {
+            color: var(--brand);
+            text-decoration: underline;
+        }
+
+        .pcb-title-link:hover .pcb-ext-icon {
+            opacity: 1;
+            transform: translate(1px, -1px);
+        }
+
+        .pcb-title-text {
+            color: var(--text-primary);
+        }
+
+        .pcb-ext-icon {
+            font-size: 11px;
+            margin-left: 3px;
+            opacity: 0.45;
+            transition: opacity .12s, transform .12s;
+            vertical-align: middle;
+        }
+
+        .pcb-outcome {
+            flex-shrink: 0;
+            align-self: center;
+        }
+
+        .pcb-meta-row {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+
+        .pcb-meta-item {
+            font-size: 12px;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .pcb-token-id {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+            word-break: break-all;
+            line-height: 1.5;
+        }
+
+        .pcb-meta-sep {
+            font-size: 12px;
+            color: var(--border-mid, var(--border-light));
+            user-select: none;
+        }
+
+
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        }
+
+        .filter-tab {
+            font-size: 14px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 20px;
+            border: none;
+            background: transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: background .12s, color .12s;
+        }
+
+        .filter-tab:hover {
+            background: var(--bg-hover);
+        }
+
+        .filter-tab.active {
+            background: var(--brand-mid);
+            color: var(--brand);
+        }
+
+        .board-section {
+            padding: 16px 18px 0;
+        }
+
+        .section-label {
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: .07em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+        }
+
+        .board-scroll {
+            display: flex;
+            gap: 12px;
+            overflow-x: auto;
+            padding-bottom: 16px;
+            cursor: grab;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .board-scroll:active {
+            cursor: grabbing;
+        }
+
+        .board-scroll::-webkit-scrollbar {
+            height: 3px;
+        }
+
+        .board-scroll::-webkit-scrollbar-thumb {
+            background: var(--border-mid);
+            border-radius: 2px;
+        }
+
+        /* ── TASK CARD ───────────────────────── */
+        .task-card {
+            flex: 0 0 220px;
+            background: var(--bg-card);
+            border: 1.5px solid var(--border-light);
+            border-radius: var(--radius-md);
+            padding: 14px;
+            cursor: pointer;
+            transition: border-color .15s, box-shadow .15s;
+            box-shadow: var(--shadow-card);
+        }
+
+        .task-card:hover {
+            border-color: var(--brand);
+            box-shadow: 0 0 0 3px var(--brand-light);
+        }
+
+        .task-card.selected {
+            border-color: var(--brand);
+            box-shadow: 0 0 0 3px var(--brand-mid);
+        }
+
+        .task-card.faded {
+            opacity: .55;
+        }
+
+        .tc-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 8px;
+        }
+
+        .tc-token {
+            font-size: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-muted);
+            word-break: break-all;
+            max-width: 120px;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 12px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 20px;
+            white-space: nowrap;
+            letter-spacing: .03em;
+        }
+
+        .s-active {
+            background: var(--green-light);
+            color: var(--green);
+        }
+
+        .s-paused {
+            background: var(--yellow-light);
+            color: var(--yellow);
+        }
+
+        .s-completed {
+            background: var(--blue-light);
+            color: var(--blue);
+        }
+
+        .s-failed {
+            background: var(--red-light);
+            color: var(--red);
+        }
+
+        .s-cancelled {
+            background: var(--bg-tag);
+            color: var(--text-secondary);
+        }
+
+        .tc-title {
+            font-size: 15px;
+            font-weight: 600;
+            line-height: 1.35;
+            margin-bottom: 10px;
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+        }
+
+        .tc-rules {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin-bottom: 10px;
+        }
+
+        .tc-rule {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 6px;
+            font-size: 13px;
+            padding: 1px 0;
+        }
+
+        .tc-rule.done {
+            opacity: .4;
+            text-decoration: line-through;
+        }
+
+        .tc-rule-kind {
+            color: var(--text-secondary);
+        }
+
+        .tc-rule-price {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 500;
+        }
+
+        .tc-progress {
+            height: 3px;
+            background: var(--border-light);
+            border-radius: 2px;
+            margin-bottom: 10px;
+        }
+
+        .tc-progress-fill {
+            height: 100%;
+            background: var(--brand);
+            border-radius: 2px;
+            transition: width .3s;
+        }
+
+        .tc-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .dry-tag {
+            font-size: 9px;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: var(--yellow-light);
+            color: var(--yellow);
+            letter-spacing: .05em;
+        }
+
+        .tc-time {
+            font-size: 13px;
+            color: var(--text-muted);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .task-card-add {
+            flex: 0 0 220px;
+            border: 1.5px dashed var(--border-mid);
+            border-radius: var(--radius-md);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            cursor: pointer;
+            color: var(--text-muted);
+            font-size: 13px;
+            font-weight: 600;
+            min-height: 154px;
+            transition: background .12s, border-color .12s, color .12s;
+        }
+
+        .task-card-add:hover {
+            background: var(--brand-light);
+            border-color: var(--brand);
+            color: var(--brand);
+        }
+
+        /* ── TASK DETAIL ─────────────────────── */
+        .detail-section {
+            padding: 16px 18px 20px;
+            border-top: 1px solid var(--border-light);
+        }
+
+        .detail-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .detail-title {
+            font-size: 15px;
+            font-weight: 700;
+            letter-spacing: -.2px;
+        }
+
+        .info-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 14px;
+        }
+
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 13px;
+            font-weight: 500;
+            padding: 3px 9px;
+            border-radius: 20px;
+            background: var(--bg-tag);
+            border: 1px solid var(--border-light);
+            color: var(--text-secondary);
+        }
+
+        /* ── TIMELINE ────────────────────────── */
+        .timeline-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .tl-group {
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-md);
+            overflow: hidden;
+        }
+
+        .tl-toggle {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            cursor: pointer;
+            background: var(--bg-page);
+            user-select: none;
+        }
+
+        .tl-toggle:hover {
+            background: var(--bg-hover);
+        }
+
+        .tl-name {
+            font-size: 15px;
+            font-weight: 600;
+            flex: 1;
+        }
+
+        .tl-meta {
+            font-size: 13px;
+            color: var(--text-secondary);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .tl-count {
+            font-size: 11px;
+            font-weight: 700;
+            padding: 1px 7px;
+            background: var(--bg-tag);
+            border-radius: 20px;
+            color: var(--text-secondary);
+        }
+
+        .tl-body {
+            padding: 4px 14px 12px;
+        }
+
+        .tl-entry {
+            padding: 9px 10px 9px 16px;
+            border-radius: var(--radius-sm);
+            margin-top: 6px;
+            background: var(--bg-card);
+            border-left: 3px solid var(--border-mid);
+            position: relative;
+        }
+
+        .tl-entry.ev-submitted {
+            border-left-color: var(--blue);
+        }
+
+        .tl-entry.ev-confirmed {
+            border-left-color: var(--green);
+        }
+
+        .tl-entry.ev-failed {
+            border-left-color: var(--red);
+        }
+
+        .tl-entry.ev-prepared {
+            border-left-color: var(--yellow);
+        }
+
+        .tl-ts {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-family: 'JetBrains Mono', monospace;
+            margin-bottom: 2px;
+        }
+
+        .tl-type {
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 3px;
+        }
+
+        .tl-msg {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+
+        .tl-prices {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            font-size: 12px;
+            color: var(--text-muted);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* ── BUTTONS ─────────────────────────── */
+        .btn-brand {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: var(--brand);
+            color: #fff;
+            border: none;
+            border-radius: var(--radius-sm);
+            font-size: 13px;
+            font-weight: 600;
+            padding: 7px 14px;
+            cursor: pointer;
+            transition: opacity .12s;
+            font-family: inherit;
+        }
+
+        .btn-brand:hover {
+            opacity: .88;
+        }
+
+        .btn-ghost {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: transparent;
+            color: var(--text-secondary);
+            border: 1.5px solid var(--border-light);
+            border-radius: var(--radius-sm);
+            font-size: 13px;
+            font-weight: 500;
+            padding: 6px 12px;
+            cursor: pointer;
+            transition: background .1s, color .1s, border-color .1s;
+            font-family: inherit;
+            line-height: 1;
+        }
+
+        .btn-ghost:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+            border-color: var(--border-mid);
+        }
+
+        .btn-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            background: transparent;
+            border: 1.5px solid var(--border-light);
+            border-radius: var(--radius-sm);
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: background .1s, color .1s;
+            font-size: 13px;
+        }
+
+        .btn-icon:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        .btn-action-pause {
+            color: var(--yellow);
+        }
+
+        .btn-action-pause:hover {
+            background: var(--yellow-light);
+            border-color: var(--yellow);
+            color: var(--yellow);
+        }
+
+        .btn-action-del {
+            color: var(--red);
+        }
+
+        .btn-action-del:hover {
+            background: var(--red-light);
+            border-color: var(--red);
+            color: var(--red);
+        }
+
+        /* ── MODAL ───────────────────────────── */
+        .modal-content {
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-xl);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, .12);
+        }
+
+        .modal-header {
+            border-bottom: 1px solid var(--border-light);
+            padding: 18px 22px 14px;
+        }
+
+        .modal-title {
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        .modal-body {
+            padding: 20px 22px;
+        }
+
+        .modal-footer {
+            border-top: 1px solid var(--border-light);
+            padding: 13px 22px;
+        }
+
+        .form-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: .04em;
+            margin-bottom: 5px;
+        }
+
+        .form-control,
+        .form-select {
+            border: 1.5px solid var(--border-mid);
+            border-radius: var(--radius-sm);
+            font-size: 14px;
+            color: var(--text-primary);
+            background: var(--bg-input);
+            font-family: inherit;
+            transition: border-color .15s, box-shadow .15s;
+        }
+
+        .form-control:focus,
+        .form-select:focus {
+            border-color: var(--brand);
+            box-shadow: 0 0 0 3px var(--brand-light);
+            outline: none;
+        }
+
+        .form-control::placeholder {
+            color: var(--text-muted);
+        }
+
+        .form-text {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        .form-check-input:checked {
+            background-color: var(--brand);
+            border-color: var(--brand);
+        }
+
+        .rule-card {
+            background: var(--bg-page);
+            border: 1.5px solid var(--border-light);
+            border-radius: var(--radius-md);
+            padding: 14px;
+            margin-bottom: 10px;
+        }
+
+        .rule-card-hdr {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .rule-num {
+            font-size: 12px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 20px;
+            background: var(--brand-light);
+            color: var(--brand);
+        }
+
+        .btn-add-rule {
+            width: 100%;
+            padding: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            background: transparent;
+            border: 1.5px dashed var(--border-mid);
+            border-radius: var(--radius-md);
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background .12s, color .12s, border-color .12s;
+            font-family: inherit;
+        }
+
+        .btn-add-rule:hover {
+            background: var(--brand-light);
+            color: var(--brand);
+            border-color: var(--brand);
+        }
+
+        /* ── TOAST ───────────────────────────── */
+        .toast-area {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .poly-toast {
+            background: var(--bg-card);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-md);
+            padding: 12px 16px;
+            min-width: 260px;
+            max-width: 360px;
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            font-size: 13px;
+            font-weight: 500;
+            box-shadow: 0 8px 28px rgba(0, 0, 0, .12);
+            animation: toast-in .18s ease-out;
+        }
+
+        @keyframes toast-in {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .poly-toast .toast-icon {
+            font-size: 16px;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+
+        .poly-toast .toast-body {
+            flex: 1;
+            min-width: 0;
+            line-height: 1.45;
+        }
+
+        .poly-toast.success {
+            border-color: var(--green-light);
+        }
+
+        .poly-toast.success .toast-icon {
+            color: var(--green);
+        }
+
+        .poly-toast.error {
+            border-color: rgba(240, 68, 56, .25);
+            background: #fff8f7;
+        }
+
+        .poly-toast.error .toast-icon {
+            color: var(--red);
+        }
+
+        .poly-toast.info .toast-icon {
+            color: var(--brand);
+        }
+
+        /* ── BUTTON LOADING STATE ────────────── */
+        @keyframes btn-spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .btn-brand[data-loading],
+        .btn-ghost[data-loading] {
+            opacity: .65;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
+        .btn-brand[data-loading] .btn-spinner,
+        .btn-ghost[data-loading] .btn-spinner {
+            display: inline-block;
+            width: 11px;
+            height: 11px;
+            border: 2px solid currentColor;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: btn-spin .55s linear infinite;
+            flex-shrink: 0;
+        }
+
+        /* ── BOARD LOADING OVERLAY ───────────── */
+        .board-loading-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(247, 247, 248, .72);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            border-radius: inherit;
+            backdrop-filter: blur(1px);
+        }
+
+        .board-loading-spinner {
+            width: 22px;
+            height: 22px;
+            border: 2.5px solid var(--border-mid);
+            border-top-color: var(--brand);
+            border-radius: 50%;
+            animation: btn-spin .65s linear infinite;
+        }
+
+        /* ── EMPTY STATE ─────────────────────── */
+        .empty-state {
+            padding: 28px 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            color: var(--text-muted);
+        }
+
+        .empty-state i {
+            font-size: 24px;
+        }
+
+        .empty-state p {
+            margin: 0;
+            font-size: 12px;
+        }
+
+        /* ── HTMX loading indicator ──────────── */
+        .htmx-indicator {
+            opacity: 0;
+            transition: opacity 200ms ease-in;
+        }
+
+        .htmx-request .htmx-indicator {
+            opacity: 1;
+        }
+
+        .htmx-request.htmx-indicator {
+            opacity: 1;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- NAV -->
+    <nav class="topnav">
+        <div class="topnav-inner">
+            <a class="nav-brand" href="/">
+                <div class="nav-brand-icon">🛡</div>
+                <span>Poly Shield</span>
+            </a>
+            <div class="nav-right" id="nav-right">
+                {% block nav_right %}
+                <span style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-secondary)"
+                    id="runtime-dot" hx-get="/ui/panels/runtime_dot" hx-trigger="load, every 5s" hx-swap="outerHTML">
+                    <span class="dot dot-gray"></span> 加载中…
+                </span>
+                {% endblock %}
+            </div>
+        </div>
+    </nav>
+
+    <!-- MAIN CONTENT -->
+    {% block content %}{% endblock %}
+
+    <!-- MODAL SLOT (partials inject here) -->
+    <div id="modal-slot">{% block modals %}{% endblock %}</div>
+
+    <!-- TOAST AREA -->
+    <div class="toast-area" id="toast-area"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"></script>
+    <script>
+        // Horizontal drag scroll for task board
+        document.addEventListener('DOMContentLoaded', () => {
+            initBoardDrag();
+        });
+        document.addEventListener('htmx:afterSwap', () => {
+            initBoardDrag();
+        });
+        function initBoardDrag() {
+            const board = document.getElementById('taskBoard');
+            if (!board || board._dragBound) return;
+            board._dragBound = true;
+            let drag = false, sx, sl;
+            board.addEventListener('mousedown', e => { drag = true; sx = e.pageX - board.offsetLeft; sl = board.scrollLeft; });
+            document.addEventListener('mouseup', () => { drag = false; });
+            board.addEventListener('mousemove', e => {
+                if (!drag) return;
+                e.preventDefault();
+                board.scrollLeft = sl - (e.pageX - board.offsetLeft - sx);
+            });
+        }
+
+        // Position accordion toggle + workspace selection
+        document.addEventListener('click', e => {
+            const toggle = e.target.closest('.pos-toggle');
+            if (!toggle) return;
+            const item = toggle.closest('.pos-item');
+            const tokenId = item.dataset.tokenId || '';
+            const wrap = document.getElementById('task-board-wrap');
+
+            // If clicking the chevron icon, only toggle open/close without changing selection
+            if (e.target.closest('.chevron')) {
+                item.classList.toggle('open');
+                return;
+            }
+
+            // For non-chevron clicks: toggle accordion + change selection if needed
+            item.classList.toggle('open');
+
+            // Selection logic:
+            // - If already selected, keep it selected (do nothing)
+            // - If not selected, select it (deselect others)
+            const isCurrentlySelected = item.classList.contains('selected');
+            if (!isCurrentlySelected && tokenId) {
+                // Select this position (deselect others)
+                document.querySelectorAll('.pos-item').forEach(i => i.classList.remove('selected'));
+                item.classList.add('selected');
+                if (wrap) wrap.dataset.tokenId = tokenId;
+                // Clear stale task detail from the previous position
+                const detail = document.getElementById('task-detail');
+                if (detail) detail.innerHTML = '';
+                // Deselect any highlighted task card
+                document.querySelectorAll('.task-card.selected').forEach(c => c.classList.remove('selected'));
+                refreshBoard();
+            }
+            // If already selected, do nothing (keep current selection and workspace state)
+        });
+
+        // Filter tab active state — now server-rendered via current_status;
+        // client-side: optimistically highlight on click for instant feedback
+        document.addEventListener('click', e => {
+            const tab = e.target.closest('.filter-tab');
+            if (!tab) return;
+            tab.closest('.filter-tabs').querySelectorAll('.filter-tab')
+                .forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+        });
+
+        // taskDeleted: clear task detail panel and refresh board
+        document.body.addEventListener('taskDeleted', () => {
+            const detail = document.getElementById('task-detail');
+            if (detail) detail.innerHTML = '';
+            refreshBoard();
+        });
+
+        // editTaskSuccess: close edit modal and return to normal
+        document.body.addEventListener('editTaskSuccess', () => {
+            const el = document.getElementById('editModal');
+            if (el) bootstrap.Modal.getInstance(el)?.hide();
+            const slot = document.getElementById('modal-slot');
+            if (slot) slot.innerHTML = '';
+        });
+
+        // taskUpdated: refresh board preserving current position filter
+        document.body.addEventListener('taskUpdated', () => refreshBoard());
+
+        function syncDollarFieldsFromCents(form) {
+            if (!form) return;
+            form.querySelectorAll('[data-dollar-target]').forEach(input => {
+                const targetName = input.dataset.dollarTarget;
+                const hidden = form.querySelector(`[name="${targetName}"]`);
+                if (!hidden) return;
+                const raw = (input.value || '').trim();
+                if (!raw) {
+                    hidden.value = '';
+                    return;
+                }
+                const cents = Number(raw);
+                if (!Number.isFinite(cents)) return;
+                hidden.value = (cents / 100).toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
+            });
+        }
+
+        // Populate the hidden _token_filter before create-task form submission
+        document.addEventListener('htmx:beforeRequest', e => {
+            const form = e.target.closest('#createTaskForm');
+            if (!form) return;
+            const wrap = document.getElementById('task-board-wrap');
+            const tokenFilter = form.querySelector('#createTokenFilter');
+            if (tokenFilter && wrap) tokenFilter.value = wrap.dataset.tokenId || '';
+            syncDollarFieldsFromCents(form);
+        });
+
+        document.addEventListener('htmx:beforeRequest', e => {
+            const form = e.target.closest('#editTaskForm');
+            if (!form) return;
+            syncDollarFieldsFromCents(form);
+        });
+
+        // ── Board loading overlay helpers ─────────────────────────────
+        function boardShowLoading(wrap) {
+            if (!wrap || wrap.querySelector('.board-loading-overlay')) return;
+            const ov = document.createElement('div');
+            ov.className = 'board-loading-overlay';
+            ov.innerHTML = '<div class="board-loading-spinner"></div>';
+            wrap.appendChild(ov);
+        }
+
+        function boardHideLoading(wrap) {
+            if (!wrap) return;
+            wrap.querySelectorAll('.board-loading-overlay').forEach(el => el.remove());
+        }
+
+        // In-flight fetch controller — abort previous request when a new one starts
+        let _boardFetchController = null;
+
+        // refreshBoard: re-fetch taskboard with current token filter and status
+        function refreshBoard() {
+            const wrap = document.getElementById('task-board-wrap');
+            if (!wrap) return;
+            const tokenId = wrap.dataset.tokenId || '';
+
+            // No position selected — show the "please select a position" placeholder
+            if (!tokenId) {
+                // Cancel any in-flight request first
+                if (_boardFetchController) { _boardFetchController.abort(); _boardFetchController = null; }
+                wrap.innerHTML = `
+                    <div class="workspace-header">
+                        <div class="filter-tabs">
+                            <span class="panel-title me-2">工作区</span>
+                        </div>
+                    </div>
+                    <div class="board-section" style="padding-top:48px;padding-bottom:48px">
+                        <div class="empty-state" style="width:100%">
+                            <i class="bi bi-arrow-left-circle" style="font-size:28px"></i>
+                            <p style="font-size:13px;font-weight:600;margin:4px 0 0">请先在左侧选择一个仓位</p>
+                            <p style="font-size:11px;color:var(--text-muted);margin:2px 0 0">选中仓位后展示相关任务</p>
+                        </div>
+                    </div>`;
+                return;
+            }
+
+            // Read currently active status tab from the board (if rendered)
+            const activeTab = wrap.querySelector('.filter-tab.active');
+            const hxVals = activeTab ? activeTab.getAttribute('hx-vals') : null;
+            let status = '';
+            if (hxVals) {
+                try { status = JSON.parse(hxVals).status || ''; } catch (_) { }
+            }
+
+            // Cancel any in-flight request before firing a new one (prevents race condition
+            // where a slow earlier response for position A overwrites the newer response for B)
+            if (_boardFetchController) { _boardFetchController.abort(); }
+            _boardFetchController = new AbortController();
+            const signal = _boardFetchController.signal;
+            const requestedTokenId = tokenId; // capture at call time
+
+            boardShowLoading(wrap);
+
+            const params = new URLSearchParams({ status, token_id: tokenId });
+            fetch('/ui/panels/taskboard?' + params.toString(), { signal })
+                .then(r => {
+                    if (!r.ok) throw Object.assign(new Error('HTTP ' + r.status), { httpStatus: r.status });
+                    return r.text();
+                })
+                .then(html => {
+                    const currentWrap = document.getElementById('task-board-wrap');
+                    if (!currentWrap) return;
+                    // Guard: discard response if user has already switched to a different position
+                    if (currentWrap.dataset.tokenId !== requestedTokenId) return;
+                    currentWrap.innerHTML = html;
+                    // Re-bind HTMX attributes on the newly injected content
+                    htmx.process(currentWrap);
+                })
+                .catch(err => {
+                    // AbortError is expected on rapid switching — not a real error
+                    if (err.name === 'AbortError') return;
+                    boardHideLoading(document.getElementById('task-board-wrap'));
+                    const msg = err.httpStatus ? `加载任务板失败（${err.httpStatus}）` : '加载任务板失败，请检查网络连接';
+                    showToast(msg, 'error');
+                    console.warn('refreshBoard fetch error:', err);
+                });
+        }
+
+        // ── Toast helper ─────────────────────────────────────────────
+        function showToast(message, type = 'info', duration = 4000) {
+            const area = document.getElementById('toast-area');
+            if (!area) return;
+            const iconMap = { success: 'bi-check-circle-fill', error: 'bi-x-circle-fill', info: 'bi-info-circle-fill' };
+            const t = document.createElement('div');
+            t.className = `poly-toast ${type}`;
+            t.innerHTML = `<i class="bi ${iconMap[type] || iconMap.info} toast-icon"></i>
+                           <div class="toast-body">${message}</div>`;
+            area.appendChild(t);
+            setTimeout(() => t.remove(), duration);
+        }
+
+        // ── Button loading state helpers ──────────────────────────────
+        function btnStartLoading(el) {
+            if (!el || el.dataset.loading) return;
+            el.dataset.loading = '1';
+            // Replace first icon child with spinner, stash original HTML
+            el.dataset._origHtml = el.innerHTML;
+            const spinner = document.createElement('span');
+            spinner.className = 'btn-spinner';
+            const firstIcon = el.querySelector('i.bi');
+            if (firstIcon) { firstIcon.replaceWith(spinner); }
+            else { el.prepend(spinner); }
+        }
+
+        function btnStopLoading(el) {
+            if (!el || !el.dataset.loading) return;
+            delete el.dataset.loading;
+            if (el.dataset._origHtml !== undefined) {
+                el.innerHTML = el.dataset._origHtml;
+                delete el.dataset._origHtml;
+            }
+        }
+
+        // ── HTMX global request lifecycle ─────────────────────────────
+        // Track in-flight HTMX buttons to restore them after swap/error
+        const _htmxLoadingEls = new WeakSet();
+
+        document.addEventListener('htmx:beforeRequest', e => {
+            const trigger = e.detail.elt;
+            if (!trigger) return;
+            const isBtn = trigger.tagName === 'BUTTON' || trigger.type === 'submit';
+            if (isBtn) {
+                btnStartLoading(trigger);
+                _htmxLoadingEls.add(trigger);
+            }
+        });
+
+        function _htmxRestoreBtn(e) {
+            const trigger = e.detail.elt;
+            if (trigger && _htmxLoadingEls.has(trigger)) {
+                btnStopLoading(trigger);
+                _htmxLoadingEls.delete(trigger);
+            }
+        }
+
+        document.addEventListener('htmx:afterRequest', e => {
+            _htmxRestoreBtn(e);
+            const xhr = e.detail.xhr;
+            if (!xhr) return;
+            // Show error toast for non-2xx responses
+            if (xhr.status >= 400) {
+                let msg = `请求失败（${xhr.status}）`;
+                try {
+                    const body = JSON.parse(xhr.responseText);
+                    if (body.detail) msg = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail);
+                } catch (_) {
+                    if (xhr.responseText && xhr.responseText.length < 200) msg = xhr.responseText;
+                }
+                showToast(msg, 'error');
+            }
+        });
+
+        document.addEventListener('htmx:sendError', e => {
+            _htmxRestoreBtn(e);
+            showToast('网络请求失败，请检查连接', 'error');
+        });
+
+        document.addEventListener('htmx:timeout', e => {
+            _htmxRestoreBtn(e);
+            showToast('请求超时，请重试', 'error');
+        });
+
+        // Auto-dismiss server-rendered success toasts (injected by partial responses)
+        document.addEventListener('htmx:afterSwap', e => {
+            const area = document.getElementById('toast-area');
+            if (!area) return;
+            area.querySelectorAll('.poly-toast').forEach(t => {
+                if (!t._autoDismissSet) {
+                    t._autoDismissSet = true;
+                    setTimeout(() => t.remove(), 4000);
+                }
+            });
+        });
+
+        // Show Bootstrap modal triggered by HTMX modal-slot load
+        document.addEventListener('htmx:afterSwap', e => {
+            const slot = document.getElementById('modal-slot');
+            if (!slot) return;
+            const el = slot.querySelector('.modal');
+            if (el && !bootstrap.Modal.getInstance(el)) {
+                new bootstrap.Modal(el).show();
+            }
+        });
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+
+</html>

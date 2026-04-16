@@ -2,12 +2,16 @@ from __future__ import annotations
 
 """FastAPI 后端接口，供 CLI 和 Telegram 复用。"""
 
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from poly_shield.backend.models import ExecutionRecord, ManagedTask, TaskStatus
@@ -143,6 +147,47 @@ class PositionResponse(BaseModel):
     proxy_wallet: str | None = None
 
 
+_TEMPLATES_DIR = Path(__file__).parent / "templates"
+_templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+
+
+def _format_cents(value: str | Decimal | None) -> str:
+    if value in (None, ""):
+        return "—"
+    amount = Decimal(str(value)) * Decimal("100")
+    cents = format(amount.normalize(), "f")
+    if "." in cents:
+        cents = cents.rstrip("0").rstrip(".")
+    return f"{cents}c"
+
+
+def _to_cents_input(value: str | Decimal | None) -> str:
+    if value in (None, ""):
+        return ""
+    amount = Decimal(str(value)) * Decimal("100")
+    cents = format(amount.normalize(), "f")
+    if "." in cents:
+        cents = cents.rstrip("0").rstrip(".")
+    return cents
+
+
+_templates.env.globals["format_cents"] = _format_cents
+_templates.env.globals["to_cents_input"] = _to_cents_input
+
+
+def _build_polymarket_url(*, event_slug: str | None, slug: str | None) -> str | None:
+    event = (event_slug or "").strip()
+    market = (slug or "").strip()
+    if event and market:
+        # Market-specific page: /event/{event_slug}/{market_slug}
+        return f"https://polymarket.com/event/{event}/{market}"
+    if event:
+        return f"https://polymarket.com/event/{event}"
+    if market:
+        return f"https://polymarket.com/event/{market}"
+    return None
+
+
 def create_app(
     service: TaskService,
     runtime: ManagedTaskRuntime | None = None,
@@ -197,7 +242,8 @@ def create_app(
         except PolymarketRequestError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         if token_id is not None:
-            positions = [position for position in positions if position.token_id == token_id]
+            positions = [
+                position for position in positions if position.token_id == token_id]
         positions = _prefer_best_bid_prices(reader, positions)
         return [_serialize_position(position) for position in positions]
 
@@ -309,6 +355,484 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         await refresh_runtime()
         return serialize_task(task)
+
+    # ── UI routes (Jinja2 + HTMX) ────────────────────────────────────────────
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    def ui_index(request: Request) -> HTMLResponse:
+        return _templates.TemplateResponse(request, "index.html")
+
+    @app.get("/ui/panels/overview", response_class=HTMLResponse, include_in_schema=False)
+    def ui_overview(request: Request) -> HTMLResponse:
+        positions_error: str | None = None
+        try:
+            reader = get_position_reader()
+            positions = reader.list_positions(size_threshold=Decimal("0"))
+            positions = _prefer_best_bid_prices(reader, positions)
+        except PolymarketConfigurationError:
+            positions = []
+            positions_error = "config"
+        except PolymarketRequestError:
+            positions = []
+            positions_error = "network"
+
+        total_value_raw = sum(float(p.current_value) for p in positions)
+        total_pnl_raw = sum(float(p.cash_pnl) for p in positions)
+        total_cost = total_value_raw - total_pnl_raw
+        total_pnl_pct_raw = (total_pnl_raw / total_cost *
+                             100) if total_cost else 0.0
+
+        tasks_all = service.list_tasks()
+        active_count = sum(1 for t in tasks_all if t.status.value == "active")
+        paused_count = sum(1 for t in tasks_all if t.status.value == "paused")
+
+        records_today = service.list_execution_records(limit=500)
+        today = datetime.now(timezone.utc).date()
+        executions_today = sum(
+            1 for r in records_today if r.created_at.date() == today)
+        confirmed_today = sum(
+            1 for r in records_today
+            if r.created_at.date() == today and r.event_type == "confirmed"
+        )
+
+        sign = "+" if total_pnl_raw >= 0 else ""
+        return _templates.TemplateResponse(request, "partials/overview.html", {
+            "total_value": f"${total_value_raw:,.2f}",
+            "total_pnl": f"{sign}${total_pnl_raw:,.2f}",
+            "total_pnl_raw": total_pnl_raw,
+            "total_pnl_pct": f"{sign}{total_pnl_pct_raw:.2f}%",
+            "total_pnl_pct_raw": total_pnl_pct_raw,
+            "active_count": active_count,
+            "paused_count": paused_count,
+            "executions_today": executions_today,
+            "confirmed_today": confirmed_today,
+            "positions_error": positions_error,
+        })
+
+    @app.get("/ui/panels/health", response_class=HTMLResponse, include_in_schema=False)
+    def ui_health(request: Request) -> HTMLResponse:
+        snap = runtime.snapshot() if runtime is not None else None
+        ctx: dict[str, object] = {"runtime": snap}
+        if snap:
+            stale = snap.get("stale_seconds", {})
+            market_stale = stale.get("market")
+            user_stale = stale.get("user")
+            ctx["market_stale_ok"] = market_stale is None or market_stale < 30
+            ctx["market_idle"] = market_stale is None
+            ctx["user_stale_ok"] = user_stale is None or user_stale < 60
+            ctx["user_idle"] = user_stale is None
+            ctx["restored_count"] = service.restored_task_count
+            ctx["runner_count"] = snap.get("runner_count", 0)
+
+            def _age(ts: str | None) -> str:
+                if not ts:
+                    return "—"
+                try:
+                    dt = datetime.fromisoformat(ts)
+                    secs = int(
+                        (datetime.now(timezone.utc) - dt).total_seconds())
+                    if secs < 60:
+                        return f"{secs}s 前"
+                    return f"{secs // 60}m 前"
+                except Exception:
+                    return ts
+
+            ctx["market_age"] = _age(snap.get("last_market_message_at"))
+            ctx["user_age"] = _age(snap.get("last_user_message_at"))
+        return _templates.TemplateResponse(request, "partials/health.html", ctx)
+
+    @app.get("/ui/panels/health_chip", response_class=HTMLResponse, include_in_schema=False)
+    def ui_health_chip(request: Request) -> HTMLResponse:
+        snap = runtime.snapshot() if runtime is not None else None
+        is_healthy = False
+        if snap:
+            stale = snap.get("stale_seconds", {})
+            market_stale = stale.get("market")
+            user_stale = stale.get("user")
+            market_ok = market_stale is None or market_stale < 30
+            user_ok = user_stale is None or user_stale < 60
+            is_healthy = market_ok and user_ok
+        return _templates.TemplateResponse(request, "partials/health_chip.html", {
+            "is_healthy": is_healthy,
+        })
+
+    @app.get("/ui/panels/runtime_dot", response_class=HTMLResponse, include_in_schema=False)
+    def ui_runtime_dot(request: Request) -> HTMLResponse:
+        snap = runtime.snapshot() if runtime is not None else None
+        is_running = bool(snap and snap.get("running"))
+        return _templates.TemplateResponse(request, "partials/runtime_dot.html", {
+            "is_running": is_running,
+        })
+
+    @app.get("/ui/panels/positions", response_class=HTMLResponse, include_in_schema=False)
+    def ui_positions(request: Request) -> HTMLResponse:
+        positions_error: str | None = None
+        try:
+            reader = get_position_reader()
+            raw_positions = reader.list_positions(size_threshold=Decimal("0"))
+            raw_positions = _prefer_best_bid_prices(reader, raw_positions)
+        except PolymarketConfigurationError:
+            raw_positions = []
+            positions_error = "config"
+        except PolymarketRequestError:
+            raw_positions = []
+            positions_error = "network"
+
+        positions_ctx = []
+        for p in raw_positions:
+            cash_pnl_raw = float(p.cash_pnl)
+            positions_ctx.append({
+                "token_id": p.token_id,
+                "title": p.title,
+                "size": str(p.size),
+                "average_cost": str(p.average_cost),
+                "current_price": str(p.current_price),
+                "current_value": str(p.current_value),
+                "cash_pnl": str(abs(cash_pnl_raw)),
+                "cash_pnl_raw": cash_pnl_raw,
+                "percent_pnl": str(p.percent_pnl),
+                "outcome": p.outcome,
+            })
+        return _templates.TemplateResponse(request, "partials/positions.html", {
+            "positions": positions_ctx,
+            "positions_error": positions_error,
+        })
+
+    @app.get("/ui/panels/taskboard", response_class=HTMLResponse, include_in_schema=False)
+    def ui_taskboard(request: Request, status: str | None = None, token_id: str | None = None) -> HTMLResponse:
+        current_status = status if status and status in TaskStatus._value2member_map_ else ""
+        status_filter = TaskStatus(current_status) if current_status else None
+        token_filter = token_id.strip() if token_id and token_id.strip() else None
+        selected_position_title = ""
+        selected_position_url = ""
+        selected_position_outcome: str | None = None
+        selected_position_price = ""
+        if token_filter:
+            try:
+                reader = get_position_reader()
+                positions_for_filter = reader.list_positions(
+                    size_threshold=Decimal("0"))
+                positions_for_filter = _prefer_best_bid_prices(
+                    reader, positions_for_filter)
+                for pos in positions_for_filter:
+                    if pos.token_id != token_filter:
+                        continue
+                    selected_position_title = (pos.title or "").strip()
+                    selected_position_url = _build_polymarket_url(
+                        event_slug=pos.event_slug,
+                        slug=pos.slug,
+                    ) or ""
+                    selected_position_outcome = pos.outcome
+                    selected_position_price = str(pos.current_price)
+                    break
+            except Exception:
+                pass
+        tasks = service.list_tasks(
+            status=status_filter, include_deleted=False, token_id=token_filter)
+        tasks_with_states = [_serialize_task(
+            t, service.load_rule_states(t.task_id)) for t in tasks]
+        # Counts scoped to the same token_id filter so tabs show per-position numbers
+        all_tasks = service.list_tasks(
+            include_deleted=False, token_id=token_filter)
+        counts = {
+            "all": len(all_tasks),
+            "active": sum(1 for t in all_tasks if t.status.value == "active"),
+            "completed": sum(1 for t in all_tasks if t.status.value == "completed"),
+            "paused": sum(1 for t in all_tasks if t.status.value == "paused"),
+        }
+        return _templates.TemplateResponse(request, "partials/taskboard.html", {
+            "tasks": tasks_with_states,
+            "counts": counts,
+            "current_status": current_status,
+            "token_id": token_filter or "",
+            "selected_position_title": selected_position_title,
+            "selected_position_url": selected_position_url,
+            "selected_position_outcome": selected_position_outcome,
+            "selected_position_price": selected_position_price,
+        })
+
+    @app.get("/ui/panels/task_detail/{task_id}", response_class=HTMLResponse, include_in_schema=False)
+    def ui_task_detail(request: Request, task_id: str) -> HTMLResponse:
+        try:
+            task = service.get_task(task_id)
+        except TaskNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        task_ctx = _serialize_task(task, service.load_rule_states(task_id))
+        records = service.list_execution_records(task_id=task_id, limit=200)
+        records_by_rule: dict[str, list] = defaultdict(list)
+        for rec in records:
+            records_by_rule[rec.rule_name].append(rec)
+        return _templates.TemplateResponse(request, "partials/task_detail.html", {
+            "task": task_ctx,
+            "records_by_rule": dict(records_by_rule),
+        })
+
+    @app.get("/ui/modals/create_task", response_class=HTMLResponse, include_in_schema=False)
+    def ui_create_task_modal(request: Request, token_id: str | None = None) -> HTMLResponse:
+        prefill: dict | None = None
+        if token_id and token_id.strip():
+            prefill = {"token_id": token_id.strip()}
+            # Try to prefill position_size and average_cost from live positions
+            try:
+                reader = get_position_reader()
+                for pos in reader.list_positions(size_threshold=Decimal("0")):
+                    if pos.token_id == token_id.strip():
+                        prefill["position_size"] = str(pos.size)
+                        prefill["average_cost"] = str(pos.average_cost)
+                        prefill["title_hint"] = pos.title or ""
+                        break
+            except Exception:
+                pass  # Prefill without size/cost if positions unavailable
+        return _templates.TemplateResponse(request, "partials/task_create_modal.html", {
+            "error": None,
+            "prefill": prefill,
+        })
+
+    @app.get("/ui/modals/edit_task/{task_id}", response_class=HTMLResponse, include_in_schema=False)
+    def ui_edit_task_modal(request: Request, task_id: str) -> HTMLResponse:
+        try:
+            task = service.get_task(task_id)
+        except TaskNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        task_ctx = _serialize_task(task, service.load_rule_states(task_id))
+        return _templates.TemplateResponse(request, "partials/task_edit_modal.html", {
+            "task": task_ctx,
+            "error": None,
+        })
+
+    @app.post("/ui/tasks/create", response_class=HTMLResponse, include_in_schema=False)
+    async def ui_create_task(request: Request) -> HTMLResponse:
+        form = await request.form()
+
+        def _field(name: str) -> str | None:
+            v = form.get(name)
+            return str(v).strip() if v else None
+
+        token_id = _field("token_id") or ""
+        if not token_id:
+            return _templates.TemplateResponse(request, "partials/task_create_modal.html", {
+                "error": "Token ID 不能为空",
+                "prefill": dict(form),
+            })
+
+        # Collect rules by scanning numbered keys
+        rules: list[ExitRule] = []
+        idx = 0
+        while True:
+            kind_val = _field(f"rule_kind_{idx}")
+            if kind_val is None:
+                break
+            sell_size_val = _field(f"rule_sell_size_{idx}")
+            if not sell_size_val:
+                idx += 1
+                continue
+            try:
+                rule_kind = RuleKind(kind_val)
+                sell_size = Decimal(sell_size_val)
+                trigger_raw = _field(f"rule_trigger_price_{idx}")
+                trigger_price = Decimal(trigger_raw) if trigger_raw else None
+                drawdown_raw = _field(f"rule_drawdown_ratio_{idx}")
+                drawdown_ratio = Decimal(
+                    drawdown_raw) if drawdown_raw else None
+                label = _field(f"rule_label_{idx}") or None
+                rules.append(ExitRule(
+                    kind=rule_kind,
+                    sell_size=sell_size,
+                    trigger_price=trigger_price,
+                    drawdown_ratio=drawdown_ratio,
+                    label=label,
+                ))
+            except (ValueError, Exception):
+                pass
+            idx += 1
+
+        if not rules:
+            return _templates.TemplateResponse(request, "partials/task_create_modal.html", {
+                "error": "至少需要一条有效规则",
+                "prefill": dict(form),
+            })
+
+        slippage_raw = _field("slippage_bps") or "50"
+        position_raw = _field("position_size")
+        avg_cost_raw = _field("average_cost")
+        dry_run = form.get("dry_run") is not None  # checkbox: present = True
+        title = _field("title") or None
+
+        try:
+            task = service.create_task(
+                token_id=token_id,
+                rules=tuple(rules),
+                dry_run=dry_run,
+                slippage_bps=Decimal(slippage_raw),
+                position_size=Decimal(position_raw) if position_raw else None,
+                average_cost=Decimal(avg_cost_raw) if avg_cost_raw else None,
+                title=title,
+            )
+        except (TaskConflictError, ValueError) as exc:
+            return _templates.TemplateResponse(request, "partials/task_create_modal.html", {
+                "error": str(exc),
+                "prefill": dict(form),
+            })
+
+        await refresh_runtime()
+
+        # Return the updated task board, preserving any active position filter
+        token_filter_create = _field("_token_filter") or None
+        tasks = service.list_tasks(
+            include_deleted=False, token_id=token_filter_create)
+        tasks_with_states = [_serialize_task(
+            t, service.load_rule_states(t.task_id)) for t in tasks]
+        all_tasks_for_counts = tasks  # counts scoped to same token filter
+        counts = {
+            "all": len(all_tasks_for_counts),
+            "active": sum(1 for t in all_tasks_for_counts if t.status.value == "active"),
+            "completed": sum(1 for t in all_tasks_for_counts if t.status.value == "completed"),
+            "paused": sum(1 for t in all_tasks_for_counts if t.status.value == "paused"),
+        }
+        response = _templates.TemplateResponse(request, "partials/taskboard.html", {
+            "tasks": tasks_with_states,
+            "counts": counts,
+            "current_status": "",
+            "token_id": token_filter_create or "",
+        })
+        response.headers["HX-Trigger"] = "taskCreated"
+        return response
+
+    @app.put("/ui/tasks/{task_id}", response_class=HTMLResponse, include_in_schema=False)
+    async def ui_update_task(request: Request, task_id: str) -> HTMLResponse:
+        try:
+            task = service.get_task(task_id)
+        except TaskNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        form = await request.form()
+
+        def _edit_field(name: str) -> str | None:
+            v = form.get(name)
+            return str(v).strip() if v else None
+
+        rules: list[ExitRule] = []
+        idx = 0
+        while True:
+            kind_val = _edit_field(f"rule_kind_{idx}")
+            if kind_val is None:
+                break
+            sell_size_val = _edit_field(f"rule_sell_size_{idx}")
+            if not sell_size_val:
+                idx += 1
+                continue
+            try:
+                rule_kind = RuleKind(kind_val)
+                sell_size = Decimal(sell_size_val)
+                trigger_raw = _edit_field(f"rule_trigger_price_{idx}")
+                trigger_price = Decimal(trigger_raw) if trigger_raw else None
+                drawdown_raw = _edit_field(f"rule_drawdown_ratio_{idx}")
+                drawdown_ratio = Decimal(
+                    drawdown_raw) if drawdown_raw else None
+                label = _edit_field(f"rule_label_{idx}") or None
+                rules.append(ExitRule(
+                    kind=rule_kind,
+                    sell_size=sell_size,
+                    trigger_price=trigger_price,
+                    drawdown_ratio=drawdown_ratio,
+                    label=label,
+                ))
+            except (ValueError, Exception):
+                pass
+            idx += 1
+
+        def _render_edit_error(msg: str) -> HTMLResponse:
+            task_ctx = _serialize_task(task, service.load_rule_states(task_id))
+            resp = _templates.TemplateResponse(request, "partials/task_edit_modal.html", {
+                "task": task_ctx,
+                "error": msg,
+            })
+            resp.headers["HX-Retarget"] = "#modal-slot"
+            resp.headers["HX-Reswap"] = "innerHTML"
+            return resp
+
+        if not rules:
+            return _render_edit_error("至少需要一条有效规则")
+
+        slippage_raw = _edit_field("slippage_bps") or "50"
+        position_raw = _edit_field("position_size")
+        avg_cost_raw = _edit_field("average_cost")
+        dry_run = form.get("dry_run") is not None
+
+        try:
+            updated_task = service.update_task(
+                task_id,
+                rules=tuple(rules),
+                dry_run=dry_run,
+                slippage_bps=Decimal(slippage_raw),
+                position_size=Decimal(position_raw) if position_raw else None,
+                average_cost=Decimal(avg_cost_raw) if avg_cost_raw else None,
+            )
+        except (TaskConflictError, ValueError) as exc:
+            return _render_edit_error(str(exc))
+
+        await refresh_runtime()
+        task_ctx = _serialize_task(
+            updated_task, service.load_rule_states(task_id))
+        records = service.list_execution_records(task_id=task_id, limit=200)
+        records_by_rule: dict[str, list] = defaultdict(list)
+        for rec in records:
+            records_by_rule[rec.rule_name].append(rec)
+        response = _templates.TemplateResponse(request, "partials/task_detail.html", {
+            "task": task_ctx,
+            "records_by_rule": dict(records_by_rule),
+        })
+        response.headers["HX-Trigger"] = "taskUpdated, editTaskSuccess"
+        return response
+
+    @app.post("/ui/actions/tasks/{task_id}/pause", response_class=HTMLResponse, include_in_schema=False)
+    async def ui_pause_task(request: Request, task_id: str) -> HTMLResponse:
+        try:
+            task = service.pause_task(task_id)
+        except (TaskNotFoundError, TaskConflictError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        await refresh_runtime()
+        task_ctx = _serialize_task(task, service.load_rule_states(task_id))
+        records = service.list_execution_records(task_id=task_id, limit=200)
+        records_by_rule: dict[str, list] = defaultdict(list)
+        for rec in records:
+            records_by_rule[rec.rule_name].append(rec)
+        response = _templates.TemplateResponse(request, "partials/task_detail.html", {
+            "task": task_ctx,
+            "records_by_rule": dict(records_by_rule),
+        })
+        response.headers["HX-Trigger"] = "taskUpdated"
+        return response
+
+    @app.post("/ui/actions/tasks/{task_id}/resume", response_class=HTMLResponse, include_in_schema=False)
+    async def ui_resume_task(request: Request, task_id: str) -> HTMLResponse:
+        try:
+            task = service.resume_task(task_id)
+        except (TaskNotFoundError, TaskConflictError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        await refresh_runtime()
+        task_ctx = _serialize_task(task, service.load_rule_states(task_id))
+        records = service.list_execution_records(task_id=task_id, limit=200)
+        records_by_rule: dict[str, list] = defaultdict(list)
+        for rec in records:
+            records_by_rule[rec.rule_name].append(rec)
+        response = _templates.TemplateResponse(request, "partials/task_detail.html", {
+            "task": task_ctx,
+            "records_by_rule": dict(records_by_rule),
+        })
+        response.headers["HX-Trigger"] = "taskUpdated"
+        return response
+
+    @app.delete("/ui/actions/tasks/{task_id}", response_class=HTMLResponse, include_in_schema=False)
+    async def ui_delete_task(request: Request, task_id: str) -> HTMLResponse:
+        try:
+            service.delete_task(task_id)
+        except TaskNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        await refresh_runtime()
+        response = HTMLResponse(content="", status_code=200)
+        response.headers["HX-Trigger"] = "taskDeleted"
+        return response
+
     return app
 
 
@@ -347,10 +871,12 @@ def _serialize_task(task: ManagedTask, rule_states: dict[str, RuleState]) -> Tas
 
 def _serialize_rule_runtime_state(state: RuleState) -> RuleRuntimeStateResponse:
     return RuleRuntimeStateResponse(
-        locked_size=None if state.locked_size is None else str(state.locked_size),
+        locked_size=None if state.locked_size is None else str(
+            state.locked_size),
         sold_size=str(state.sold_size),
         remaining_size=str(state.remaining_size),
-        trigger_bid=None if state.trigger_bid is None else str(state.trigger_bid),
+        trigger_bid=None if state.trigger_bid is None else str(
+            state.trigger_bid),
         peak_bid=None if state.peak_bid is None else str(state.peak_bid),
         is_triggered=state.is_triggered,
         is_complete=state.is_complete,

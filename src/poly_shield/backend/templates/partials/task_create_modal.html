@@ -1,0 +1,271 @@
+{# partials/task_create_modal.html — injected into #modal-slot, JS auto-shows the modal #}
+<div class="modal fade" id="createModal" tabindex="-1" aria-labelledby="createModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg" style="max-width:660px">
+        <div class="modal-content">
+
+            <div class="modal-header">
+                <h5 class="modal-title" id="createModalLabel">
+                    <i class="bi bi-plus-circle me-2" style="color:var(--brand)"></i>新建任务
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+
+            <div class="modal-body" style="max-height:70vh;overflow-y:auto">
+
+                {% if error %}
+                <div class="alert alert-danger d-flex align-items-center gap-2 py-2 mb-3" style="font-size:13px">
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                    <span>{{ error }}</span>
+                </div>
+                {% endif %}
+
+                <form id="createTaskForm" hx-post="/ui/tasks/create" hx-target="#task-board-wrap" hx-swap="innerHTML"
+                    hx-on::after-request="
+                        if(event.detail.successful){
+                            bootstrap.Modal.getInstance(document.getElementById('createModal')).hide();
+                            document.getElementById('modal-slot').innerHTML='';
+                        }
+                      ">
+                    <!-- Carries the active position token filter back to the server so the returned board stays filtered -->
+                    <input type="hidden" name="_token_filter" id="createTokenFilter">
+
+                    <div class="mb-4">
+                        <label class="form-label">任务名称（可选）</label>
+                        <input type="text" name="title" class="form-control" placeholder="例: 特朗普2026加关税 止损"
+                            value="{{ prefill.title if prefill else '' }}" />
+                    </div>
+
+                    <!-- Token ID: hidden field, value always comes from selected position -->
+                    <input type="hidden" name="token_id" value="{{ prefill.token_id if prefill else '' }}">
+
+                    {% if prefill and prefill.token_id %}
+                    <div class="mb-4">
+                        <div
+                            style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--brand-light);border:1.5px solid var(--brand);border-radius:var(--radius-md)">
+                            <i class="bi bi-wallet2" style="color:var(--brand);font-size:16px;flex-shrink:0"></i>
+                            <div style="min-width:0;flex:1">
+                                {% if prefill.title_hint %}
+                                <div
+                                    style="font-size:13px;font-weight:600;color:var(--brand);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                                    {{ prefill.title_hint }}</div>
+                                {% endif %}
+                                <div
+                                    style="font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--text-secondary);margin-top:1px">
+                                    {{ prefill.token_id[:16] }}&hellip;</div>
+                            </div>
+                            <span
+                                style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:var(--brand);color:#fff;flex-shrink:0">已关联</span>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <div class="row g-3 mb-4">
+                        <div class="col-6">
+                            <label class="form-label">持仓数量（可选）</label>
+                            <input type="number" name="position_size" class="form-control" placeholder="例: 500"
+                                step="0.01" min="0" value="{{ prefill.position_size if prefill else '' }}" />
+                            <div class="form-text">不填则从持仓接口自动读取</div>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">平均成本（可选）</label>
+                            <input type="hidden" name="average_cost"
+                                value="{{ prefill.average_cost if prefill else '' }}" />
+                            <input type="number" class="form-control" placeholder="例: 62" step="0.01" min="0"
+                                data-dollar-target="average_cost"
+                                value="{{ to_cents_input(prefill.average_cost) if prefill else '' }}" />
+                            <div class="form-text">前端显示美分，提交时自动换算为美元</div>
+                        </div>
+                    </div>
+
+                    <div class="row g-3 mb-4">
+                        <div class="col-6">
+                            <label class="form-label">滑点容忍度（bps）</label>
+                            <input type="number" name="slippage_bps" class="form-control"
+                                value="{{ prefill.slippage_bps if prefill else '50' }}" min="0" max="1000" />
+                            <div class="form-text">1 bps = 0.01%，默认 50</div>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label d-block">执行模式</label>
+                            <div class="d-flex align-items-center gap-2 mt-2">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" name="dry_run" id="drySwitch" {% if
+                                        not prefill or prefill.dry_run %}checked{% endif %} />
+                                    <label class="form-check-label" for="drySwitch" style="font-size:13px">
+                                        演练模式（Dry Run）
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="form-text">开启后不会真实下单</div>
+                        </div>
+                    </div>
+
+                    <!-- Rules container -->
+                    <div class="mb-1">
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                            <label class="form-label mb-0">退出规则 <span style="color:var(--red)">*</span></label>
+                            <span class="form-text mb-0">至少 1 条</span>
+                        </div>
+
+                        <div id="rules-container">
+                            <!-- Initial rule card -->
+                            <div class="rule-card" data-rule-index="0">
+                                <div class="rule-card-hdr">
+                                    <span class="rule-num">规则 #1</span>
+                                    <button type="button" class="btn-icon"
+                                        style="color:var(--red);border-color:var(--red-light)"
+                                        onclick="removeRule(this)">
+                                        <i class="bi bi-trash3"></i>
+                                    </button>
+                                </div>
+                                <div class="row g-3">
+                                    <div class="col-6">
+                                        <label class="form-label">规则类型</label>
+                                        <select class="form-select" name="rule_kind_0"
+                                            onchange="updateRuleFields(this, 0)">
+                                            <option value="breakeven-stop">保本止损</option>
+                                            <option value="price-stop">价格止损</option>
+                                            <option value="take-profit" selected>止盈</option>
+                                            <option value="trailing-take-profit">追踪止盈</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label">卖出数量</label>
+                                        <input type="number" class="form-control" name="rule_sell_size_0"
+                                            placeholder="例: 200" step="0.01" min="0" />
+                                    </div>
+                                    <div class="col-6 rule-trigger-price-field">
+                                        <label class="form-label">触发价格</label>
+                                        <input type="hidden" name="rule_trigger_price_0" value="" />
+                                        <input type="number" class="form-control"
+                                            data-dollar-target="rule_trigger_price_0" placeholder="例: 80" step="0.01"
+                                            min="0" max="100" value="" />
+                                    </div>
+                                    <div class="col-6 rule-drawdown-field" style="display:none">
+                                        <label class="form-label">回撤比例（0~1）</label>
+                                        <input type="number" class="form-control" name="rule_drawdown_ratio_0"
+                                            placeholder="例: 0.05 = 5%" step="0.01" min="0" max="1" />
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label">标签（可选）</label>
+                                        <input type="text" class="form-control" name="rule_label_0"
+                                            placeholder="例: 第一档止盈" />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button type="button" class="btn-add-rule" onclick="addRule()">
+                            <i class="bi bi-plus-circle"></i> 添加规则
+                        </button>
+                    </div>
+
+                </form>
+            </div>
+
+            <div class="modal-footer">
+                <span style="font-size:11px;color:var(--text-muted);margin-right:auto">
+                    <i class="bi bi-info-circle me-1"></i>演练模式下不会提交真实订单
+                </span>
+                <button type="button" class="btn-ghost" data-bs-dismiss="modal">取消</button>
+                <button type="submit" form="createTaskForm" class="btn-brand">
+                    <i class="bi bi-plus-lg"></i> 创建任务
+                </button>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<script>
+    (function () {
+        let ruleCount = 1;
+
+        const RULE_TEMPLATES = {
+            'breakeven-stop': { showTrigger: false, showDrawdown: false },
+            'price-stop': { showTrigger: true, showDrawdown: false },
+            'take-profit': { showTrigger: true, showDrawdown: false },
+            'trailing-take-profit': { showTrigger: false, showDrawdown: true },
+        };
+
+        window.updateRuleFields = function (select, idx) {
+            const card = select.closest('.rule-card');
+            const cfg = RULE_TEMPLATES[select.value] || { showTrigger: true, showDrawdown: false };
+            const triggerField = card.querySelector('.rule-trigger-price-field');
+            triggerField.style.display = cfg.showTrigger ? '' : 'none';
+            if (!cfg.showTrigger) {
+                const visibleInput = triggerField.querySelector('[data-dollar-target]');
+                const hiddenInput = triggerField.querySelector('input[type="hidden"]');
+                if (visibleInput) visibleInput.value = '';
+                if (hiddenInput) hiddenInput.value = '';
+            }
+            card.querySelector('.rule-drawdown-field').style.display = cfg.showDrawdown ? '' : 'none';
+        };
+
+        window.addRule = function () {
+            const idx = ruleCount++;
+            const container = document.getElementById('rules-container');
+            const div = document.createElement('div');
+            div.className = 'rule-card';
+            div.dataset.ruleIndex = idx;
+            div.innerHTML = `
+            <div class="rule-card-hdr">
+                <span class="rule-num">规则 #${container.querySelectorAll('.rule-card').length + 1}</span>
+                <button type="button" class="btn-icon"
+                        style="color:var(--red);border-color:var(--red-light)"
+                        onclick="removeRule(this)">
+                    <i class="bi bi-trash3"></i>
+                </button>
+            </div>
+            <div class="row g-3">
+                <div class="col-6">
+                    <label class="form-label">规则类型</label>
+                    <select class="form-select" name="rule_kind_${idx}"
+                            onchange="updateRuleFields(this, ${idx})">
+                        <option value="breakeven-stop">保本止损</option>
+                        <option value="price-stop">价格止损</option>
+                        <option value="take-profit" selected>止盈</option>
+                        <option value="trailing-take-profit">追踪止盈</option>
+                    </select>
+                </div>
+                <div class="col-6">
+                    <label class="form-label">卖出数量</label>
+                    <input type="number" class="form-control"
+                           name="rule_sell_size_${idx}" placeholder="例: 200" step="0.01" min="0" />
+                </div>
+                <div class="col-6 rule-trigger-price-field">
+                    <label class="form-label">触发价格</label>
+                      <input type="hidden" name="rule_trigger_price_${idx}" value="" />
+                      <input type="number" class="form-control" data-dollar-target="rule_trigger_price_${idx}"
+                          placeholder="例: 80" step="0.01" min="0" max="100" value="" />
+                </div>
+                <div class="col-6 rule-drawdown-field" style="display:none">
+                    <label class="form-label">回撤比例（0~1）</label>
+                    <input type="number" class="form-control"
+                           name="rule_drawdown_ratio_${idx}" placeholder="例: 0.05 = 5%" step="0.01" min="0" max="1" />
+                </div>
+                <div class="col-6">
+                    <label class="form-label">标签（可选）</label>
+                    <input type="text" class="form-control"
+                           name="rule_label_${idx}" placeholder="例: 第二档止盈" />
+                </div>
+            </div>`;
+            container.appendChild(div);
+            renumberRules();
+        };
+
+        window.removeRule = function (btn) {
+            const card = btn.closest('.rule-card');
+            const container = document.getElementById('rules-container');
+            if (container.querySelectorAll('.rule-card').length <= 1) return;
+            card.remove();
+            renumberRules();
+        };
+
+        function renumberRules() {
+            document.querySelectorAll('#rules-container .rule-card').forEach((card, i) => {
+                const badge = card.querySelector('.rule-num');
+                if (badge) badge.textContent = `规则 #${i + 1}`;
+            });
+        }
+    })();
+</script>

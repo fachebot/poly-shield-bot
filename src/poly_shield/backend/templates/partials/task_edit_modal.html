@@ -1,0 +1,252 @@
+{# partials/task_edit_modal.html — injected into #modal-slot via hx-swap="innerHTML" #}
+<div class="modal fade" id="editModal" tabindex="-1" aria-labelledby="editModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg" style="max-width:660px">
+        <div class="modal-content">
+
+            <div class="modal-header">
+                <h5 class="modal-title" id="editModalLabel">
+                    <i class="bi bi-pencil-square me-2" style="color:var(--brand)"></i>编辑任务
+                    <span style="font-size:13px;font-weight:400;color:var(--text-secondary);margin-left:8px">
+                        {{ task.title or (task.task_id[:12] ~ "…") }}
+                    </span>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+
+            <div class="modal-body" style="max-height:70vh;overflow-y:auto">
+
+                {% if error %}
+                <div class="alert alert-danger d-flex align-items-center gap-2 py-2 mb-3" style="font-size:13px">
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                    <span>{{ error }}</span>
+                </div>
+                {% endif %}
+
+                <div class="alert alert-warning d-flex align-items-center gap-2 py-2 mb-3" style="font-size:12px">
+                    <i class="bi bi-lock-fill"></i>
+                    <span>仅 <strong>已暂停</strong> 的任务可编辑；保存后任务保持暂停状态，需手动恢复。</span>
+                </div>
+
+                <form id="editTaskForm" hx-put="/ui/tasks/{{ task.task_id }}" hx-target="#task-detail"
+                    hx-swap="innerHTML">
+
+                    <!-- Read-only: Token ID -->
+                    <div class="mb-4">
+                        <label class="form-label">Token ID（不可修改）</label>
+                        <input type="text" class="form-control" value="{{ task.token_id }}" disabled
+                            style="font-family:'JetBrains Mono',monospace;font-size:12px;opacity:.7" />
+                    </div>
+
+                    <div class="row g-3 mb-4">
+                        <div class="col-6">
+                            <label class="form-label">持仓数量（可选）</label>
+                            <input type="number" name="position_size" class="form-control" placeholder="例: 500"
+                                step="0.01" min="0" value="{{ task.position_size or '' }}" />
+                            <div class="form-text">不填则从持仓接口自动读取</div>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">平均成本（可选）</label>
+                            <input type="hidden" name="average_cost" value="{{ task.average_cost or '' }}" />
+                            <input type="number" class="form-control" placeholder="例: 62" step="0.01" min="0"
+                                data-dollar-target="average_cost" value="{{ to_cents_input(task.average_cost) }}" />
+                            <div class="form-text">前端显示美分，提交时自动换算为美元</div>
+                        </div>
+                    </div>
+
+                    <div class="row g-3 mb-4">
+                        <div class="col-6">
+                            <label class="form-label">滑点容忍度（bps）</label>
+                            <input type="number" name="slippage_bps" class="form-control"
+                                value="{{ task.slippage_bps }}" min="0" max="1000" />
+                            <div class="form-text">1 bps = 0.01%，默认 50</div>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label d-block">执行模式</label>
+                            <div class="d-flex align-items-center gap-2 mt-2">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" name="dry_run" id="editDrySwitch" {%
+                                        if task.dry_run %}checked{% endif %} />
+                                    <label class="form-check-label" for="editDrySwitch" style="font-size:13px">
+                                        演练模式（Dry Run）
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="form-text">开启后不会真实下单</div>
+                        </div>
+                    </div>
+
+                    <!-- Rules container (pre-filled) -->
+                    <div class="mb-1">
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                            <label class="form-label mb-0">退出规则 <span style="color:var(--red)">*</span></label>
+                            <span class="form-text mb-0">至少 1 条</span>
+                        </div>
+
+                        <div id="edit-rules-container">
+                            {% for rule in task.rules %}
+                            <div class="rule-card" data-rule-index="{{ loop.index0 }}">
+                                <div class="rule-card-hdr">
+                                    <span class="rule-num">规则 #{{ loop.index }}</span>
+                                    <button type="button" class="btn-icon"
+                                        style="color:var(--red);border-color:var(--red-light)"
+                                        onclick="removeEditRule(this)">
+                                        <i class="bi bi-trash3"></i>
+                                    </button>
+                                </div>
+                                <div class="row g-3">
+                                    <div class="col-6">
+                                        <label class="form-label">规则类型</label>
+                                        <select class="form-select" name="rule_kind_{{ loop.index0 }}"
+                                            onchange="updateEditRuleFields(this, {{ loop.index0 }})">
+                                            <option value="breakeven-stop" {% if rule.kind=="breakeven-stop"
+                                                %}selected{% endif %}>保本止损</option>
+                                            <option value="price-stop" {% if rule.kind=="price-stop" %}selected{% endif
+                                                %}>价格止损</option>
+                                            <option value="take-profit" {% if rule.kind=="take-profit" %}selected{%
+                                                endif %}>止盈</option>
+                                            <option value="trailing-take-profit" {% if rule.kind=="trailing-take-profit"
+                                                %}selected{% endif %}>追踪止盈</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label">卖出数量</label>
+                                        <input type="number" class="form-control"
+                                            name="rule_sell_size_{{ loop.index0 }}" value="{{ rule.sell_size }}"
+                                            step="0.01" min="0" />
+                                    </div>
+                                    <div class="col-6 rule-trigger-price-field" {% if rule.kind in
+                                        ("breakeven-stop", "trailing-take-profit" ) %}style="display:none" {% endif %}>
+                                        <label class="form-label">触发价格</label>
+                                        <input type="hidden" name="rule_trigger_price_{{ loop.index0 }}"
+                                            value="{{ rule.trigger_price or '' }}" />
+                                        <input type="number" class="form-control"
+                                            data-dollar-target="rule_trigger_price_{{ loop.index0 }}"
+                                            value="{{ to_cents_input(rule.trigger_price) }}" step="0.01" min="0"
+                                            max="100" />
+                                    </div>
+                                    <div class="col-6 rule-drawdown-field" {% if rule.kind !="trailing-take-profit"
+                                        %}style="display:none" {% endif %}>
+                                        <label class="form-label">回撤比例（0~1）</label>
+                                        <input type="number" class="form-control"
+                                            name="rule_drawdown_ratio_{{ loop.index0 }}"
+                                            value="{{ rule.drawdown_ratio or '' }}" step="0.01" min="0" max="1" />
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label">标签（可选）</label>
+                                        <input type="text" class="form-control" name="rule_label_{{ loop.index0 }}"
+                                            value="{{ rule.label or '' }}" placeholder="例: 第一档止盈" />
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+
+                        <button type="button" class="btn-add-rule" onclick="addEditRule()">
+                            <i class="bi bi-plus-circle"></i> 添加规则
+                        </button>
+                    </div>
+
+                </form>
+            </div>
+
+            <div class="modal-footer">
+                <span style="font-size:11px;color:var(--text-muted);margin-right:auto">
+                    <i class="bi bi-arrow-counterclockwise me-1"></i>保存后任务保持暂停，恢复后规则重新生效
+                </span>
+                <button type="button" class="btn-ghost" data-bs-dismiss="modal">取消</button>
+                <button type="submit" form="editTaskForm" class="btn-brand">
+                    <i class="bi bi-floppy"></i> 保存修改
+                </button>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<script>
+    (function () {
+        let editRuleCount = {{ task.rules | length
+    }};
+
+    const EDIT_RULE_TEMPLATES = {
+        'breakeven-stop': { showTrigger: false, showDrawdown: false },
+        'price-stop': { showTrigger: true, showDrawdown: false },
+        'take-profit': { showTrigger: true, showDrawdown: false },
+        'trailing-take-profit': { showTrigger: false, showDrawdown: true },
+    };
+
+    window.updateEditRuleFields = function (select, idx) {
+        const card = select.closest('.rule-card');
+        const cfg = EDIT_RULE_TEMPLATES[select.value] || { showTrigger: true, showDrawdown: false };
+        const triggerField = card.querySelector('.rule-trigger-price-field');
+        triggerField.style.display = cfg.showTrigger ? '' : 'none';
+        if (!cfg.showTrigger) {
+            const visibleInput = triggerField.querySelector('[data-dollar-target]');
+            const hiddenInput = triggerField.querySelector('input[type="hidden"]');
+            if (visibleInput) visibleInput.value = '';
+            if (hiddenInput) hiddenInput.value = '';
+        }
+        card.querySelector('.rule-drawdown-field').style.display = cfg.showDrawdown ? '' : 'none';
+    };
+
+    window.addEditRule = function () {
+        const idx = editRuleCount++;
+        const container = document.getElementById('edit-rules-container');
+        const div = document.createElement('div');
+        div.className = 'rule-card';
+        div.dataset.ruleIndex = idx;
+        div.innerHTML = `
+            <div class="rule-card-hdr">
+                <span class="rule-num">规则 #${container.querySelectorAll('.rule-card').length + 1}</span>
+                <button type="button" class="btn-icon"
+                        style="color:var(--red);border-color:var(--red-light)"
+                        onclick="removeEditRule(this)">
+                    <i class="bi bi-trash3"></i>
+                </button>
+            </div>
+            <div class="row g-3">
+                <div class="col-6">
+                    <label class="form-label">规则类型</label>
+                    <select class="form-select" name="rule_kind_${idx}"
+                            onchange="updateEditRuleFields(this, ${idx})">
+                        <option value="breakeven-stop">保本止损</option>
+                        <option value="price-stop">价格止损</option>
+                        <option value="take-profit" selected>止盈</option>
+                        <option value="trailing-take-profit">追踪止盈</option>
+                    </select>
+                </div>
+                <div class="col-6">
+                    <label class="form-label">卖出数量</label>
+                    <input type="number" class="form-control" name="rule_sell_size_${idx}"
+                           placeholder="例: 200" step="0.01" min="0" />
+                </div>
+                <div class="col-6 rule-trigger-price-field">
+                    <label class="form-label">触发价格</label>
+                      <input type="hidden" name="rule_trigger_price_${idx}" value="" />
+                      <input type="number" class="form-control" data-dollar-target="rule_trigger_price_${idx}"
+                          placeholder="例: 80" step="0.01" min="0" max="100" value="" />
+                </div>
+                <div class="col-6 rule-drawdown-field" style="display:none">
+                    <label class="form-label">回撤比例（0~1）</label>
+                    <input type="number" class="form-control" name="rule_drawdown_ratio_${idx}"
+                           placeholder="例: 0.05 = 5%" step="0.01" min="0" max="1" />
+                </div>
+                <div class="col-6">
+                    <label class="form-label">标签（可选）</label>
+                    <input type="text" class="form-control" name="rule_label_${idx}"
+                           placeholder="例: 第一档止盈" />
+                </div>
+            </div>`;
+        container.appendChild(div);
+    };
+
+    window.removeEditRule = function (btn) {
+        const container = document.getElementById('edit-rules-container');
+        if (container.querySelectorAll('.rule-card').length <= 1) return;
+        btn.closest('.rule-card').remove();
+        container.querySelectorAll('.rule-card').forEach((card, i) => {
+            card.querySelector('.rule-num').textContent = `规则 #${i + 1}`;
+        });
+    };
+    }) ();
+</script>

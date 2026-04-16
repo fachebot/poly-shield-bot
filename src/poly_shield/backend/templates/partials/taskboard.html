@@ -1,0 +1,142 @@
+{# partials/taskboard.html — hx-swap="innerHTML" into #task-board-wrap #}
+{# Includes workspace header (with live counts) + board section #}
+{% macro status_badge(status) %}
+{% if status == "active" %}<span class="status-badge s-active"><span class="dot dot-green"></span>活跃</span>
+{% elif status == "paused" %}<span class="status-badge s-paused"><i class="bi bi-pause-fill"></i>已暂停</span>
+{% elif status == "completed" %}<span class="status-badge s-completed"><i class="bi bi-check-circle-fill"></i>已完成</span>
+{% elif status == "failed" %}<span class="status-badge s-failed"><i class="bi bi-x-circle-fill"></i>失败</span>
+{% elif status == "cancelled" %}<span class="status-badge s-cancelled"><i class="bi bi-slash-circle"></i>已取消</span>
+{% else %}<span class="status-badge s-cancelled">{{ status }}</span>
+{% endif %}
+{% endmacro %}
+
+{% macro rule_kind_label(kind) %}
+{% if kind == "breakeven-stop" %}保本止损
+{% elif kind == "price-stop" %}价格止损
+{% elif kind == "take-profit" %}止盈
+{% elif kind == "trailing-take-profit" %}追踪止盈
+{% else %}{{ kind }}
+{% endif %}
+{% endmacro %}
+
+<!-- Workspace Header (rendered with live counts) -->
+<div class="workspace-header">
+    <div class="filter-tabs">
+        <span class="panel-title me-2">工作区</span>
+        <button class="filter-tab {% if current_status == '' %}active{% endif %}" hx-get="/ui/panels/taskboard"
+            hx-target="#task-board-wrap" hx-swap="innerHTML" hx-vals='{"status":"", "token_id":"{{ token_id|e }}"}'>全部
+            {{ counts.all }}</button>
+        <button class="filter-tab {% if current_status == 'active' %}active{% endif %}" hx-get="/ui/panels/taskboard"
+            hx-target="#task-board-wrap" hx-swap="innerHTML"
+            hx-vals='{"status":"active", "token_id":"{{ token_id|e }}"}'>进行中 {{ counts.active
+            }}</button>
+        <button class="filter-tab {% if current_status == 'completed' %}active{% endif %}" hx-get="/ui/panels/taskboard"
+            hx-target="#task-board-wrap" hx-swap="innerHTML"
+            hx-vals='{"status":"completed", "token_id":"{{ token_id|e }}"}'>已完成 {{ counts.completed
+            }}</button>
+        <button class="filter-tab {% if current_status == 'paused' %}active{% endif %}" hx-get="/ui/panels/taskboard"
+            hx-target="#task-board-wrap" hx-swap="innerHTML"
+            hx-vals='{"status":"paused", "token_id":"{{ token_id|e }}"}'>已暂停 {{ counts.paused
+            }}</button>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn-ghost" hx-get="/ui/panels/taskboard" hx-target="#task-board-wrap" hx-swap="innerHTML"
+            hx-vals='{"status":"{{ current_status }}", "token_id":"{{ token_id|e }}"}' id="refreshBtn">
+            <i class="bi bi-arrow-clockwise"></i> 刷新任务板
+        </button>
+        <button class="btn-brand" hx-get="/ui/modals/create_task" hx-target="#modal-slot" hx-swap="innerHTML"
+            hx-vals='{"token_id":"{{ token_id|e }}"}' {% if not token_id %}title="请先在左侧选择一个仓位" {% endif %}>
+            <i class="bi bi-plus-lg"></i> 新建任务
+        </button>
+    </div>
+</div>
+{% if token_id %}
+<div class="pos-context-bar">
+    <div class="pcb-body">
+        <div class="pcb-title-row">
+            {% if selected_position_url %}
+            <a class="pcb-title-link" href="{{ selected_position_url }}" target="_blank" rel="noopener noreferrer">
+                {{ selected_position_title or token_id }}
+                <i class="bi bi-box-arrow-up-right pcb-ext-icon"></i>
+            </a>
+            {% else %}
+            <span class="pcb-title-text">{{ selected_position_title or token_id }}</span>
+            {% endif %}
+            {% if selected_position_outcome %}
+            <span
+                class="outcome-pill {% if selected_position_outcome == 'Yes' %}pill-yes{% else %}pill-no{% endif %} pcb-outcome">
+                {{ selected_position_outcome }}
+            </span>
+            {% endif %}
+        </div>
+        <div class="pcb-meta-row">
+            {% if selected_position_price %}
+            <span class="pcb-meta-item">
+                <i class="bi bi-activity" style="font-size:10px"></i>
+                当前价 <span style="font-family:'JetBrains Mono',monospace">{{ format_cents(selected_position_price)
+                    }}</span>
+            </span>
+            <span class="pcb-meta-sep">·</span>
+            {% endif %}
+            <span class="pcb-meta-item pcb-token-id" title="{{ token_id }}">{{ token_id }}</span>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Board -->
+<div class="board-section">
+    <div class="section-label">任务板</div>
+    <div class="board-scroll" id="taskBoard">
+
+        {% for task in tasks %}
+        {% set completed_rules = task.rules | selectattr("runtime_state.is_complete") | list | length %}
+        {% set total_rules = task.rules | length %}
+        {% set progress_pct = (completed_rules / total_rules * 100) | int if total_rules > 0 else 0 %}
+        {% set is_faded = task.status in ("completed", "cancelled", "deleted") %}
+
+        <div class="task-card{% if is_faded %} faded{% endif %}" hx-get="/ui/panels/task_detail/{{ task.task_id }}"
+            hx-target="#task-detail" hx-swap="innerHTML"
+            hx-on:click="document.querySelectorAll('.task-card').forEach(c=>c.classList.remove('selected'));this.classList.add('selected')">
+            <div class="tc-header">
+                <span class="tc-token" title="{{ task.token_id }}">{{ task.token_id[:10] }}…</span>
+                {{ status_badge(task.status) }}
+            </div>
+            <div class="tc-title">{{ task.title or ("任务 " ~ task.task_id[:8]) }}</div>
+            <div class="tc-progress">
+                <div class="tc-progress-fill"
+                    style="width:{{ progress_pct }}%;{% if task.status == 'paused' %}background:var(--yellow){% elif task.status == 'completed' %}background:var(--blue){% endif %}">
+                </div>
+            </div>
+            <div class="tc-rules">
+                {% for rule in task.rules %}
+                <div class="tc-rule{% if rule.runtime_state.is_complete %} done{% endif %}">
+                    <span class="tc-rule-kind">{{ rule_kind_label(rule.kind) }}</span>
+                    <span class="tc-rule-price
+                        {% if rule.kind in ('take-profit','trailing-take-profit') and not rule.runtime_state.is_complete %}
+                        " style="color:var(--green)" {% elif rule.kind in ('price-stop','breakeven-stop') and not
+                        rule.runtime_state.is_complete %} " style=" color:var(--red)" {% else %}"{% endif %}>
+                        {% if rule.trigger_price %}@{{ format_cents(rule.trigger_price) }}
+                        {% elif rule.drawdown_ratio %}@-{{ (rule.drawdown_ratio | float * 100) | round(0) | int }}%
+                        {% elif rule.kind == "breakeven-stop" %}@均价
+                        {% else %}—{% endif %}
+                    </span>
+                </div>
+                {% endfor %}
+            </div>
+            <div class="tc-footer">
+                {% if task.dry_run %}<span class="dry-tag">DRY RUN</span>{% else %}<span></span>{% endif %}
+                <span class="tc-time">{{ task.created_at.strftime("%m-%d %H:%M") }}</span>
+            </div>
+        </div>
+        {% endfor %}
+
+        <!-- Add placeholder -->
+        <div class="task-card-add" hx-get="/ui/modals/create_task" hx-target="#modal-slot" hx-swap="innerHTML"
+            hx-vals='{"token_id":"{{ token_id|e }}"}'>
+            <i class="bi bi-plus-circle" style="font-size:20px"></i>
+            新建任务
+        </div>
+
+    </div><!-- /board-scroll -->
+</div><!-- /board-section -->

@@ -1,0 +1,47 @@
+{# partials/health.html — hx-swap="innerHTML" into #health-body #}
+<div class="health-body">
+    {% if runtime %}
+    <div class="health-row">
+        <span class="h-key">
+            <span class="dot {% if market_stale_ok %}dot-green{% else %}dot-red{% endif %}"></span>
+            行情 WebSocket
+        </span>
+        <span class="h-val"
+            style="color:{% if not market_stale_ok %}var(--red){% elif market_idle %}var(--text-muted){% else %}var(--green){% endif %}">
+            {% if not market_stale_ok %}超时{% elif market_idle %}空闲{% else %}已连接{% endif %}
+        </span>
+    </div>
+    <div class="health-row">
+        <span class="h-key">
+            <span
+                class="dot {% if not user_stale_ok %}dot-red{% elif user_idle %}dot-gray{% else %}dot-green{% endif %}"></span>
+            用户 WebSocket
+        </span>
+        <span class="h-val"
+            style="color:{% if not user_stale_ok %}var(--red){% elif user_idle %}var(--text-muted){% else %}var(--green){% endif %}">
+            {% if not user_stale_ok %}超时{% elif user_idle %}空闲{% else %}已连接{% endif %}
+        </span>
+    </div>
+    <div class="health-row">
+        <span class="h-key"><i class="bi bi-clock" style="font-size:11px"></i>最后行情消息</span>
+        <span class="h-val">{{ market_age }}</span>
+    </div>
+    <div class="health-row">
+        <span class="h-key"><i class="bi bi-clock" style="font-size:11px"></i>最后用户消息</span>
+        <span class="h-val">{{ user_age }}</span>
+    </div>
+    <div class="health-row">
+        <span class="h-key"><i class="bi bi-list-check" style="font-size:11px"></i>已恢复任务</span>
+        <span class="h-val">{{ restored_count }}</span>
+    </div>
+    <div class="health-row">
+        <span class="h-key"><i class="bi bi-cpu" style="font-size:11px"></i>运行中规则</span>
+        <span class="h-val">{{ runner_count }}</span>
+    </div>
+    {% else %}
+    <div class="health-row">
+        <span class="h-key"><span class="dot dot-gray"></span>运行时</span>
+        <span class="h-val" style="color:var(--text-muted)">未启动</span>
+    </div>
+    {% endif %}
+</div>

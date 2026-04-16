@@ -1,0 +1,8 @@
+{# partials/health_chip.html — hx-swap="outerHTML" replacing #health-chip / the span itself #}
+<span id="health-chip" class="chip" style="background:{% if is_healthy %}var(--green-light){% else %}var(--red-light){% endif %};
+             color:{% if is_healthy %}var(--green){% else %}var(--red){% endif %};
+             border-color:{% if is_healthy %}var(--green-light){% else %}var(--red-light){% endif %}"
+    hx-get="/ui/panels/health_chip" hx-trigger="every 5s" hx-swap="outerHTML">
+    <span class="dot {% if is_healthy %}dot-green{% else %}dot-red{% endif %}"></span>
+    {% if is_healthy %}正常{% else %}异常{% endif %}
+</span>

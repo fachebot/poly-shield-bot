@@ -1,0 +1,146 @@
+{# partials/task_detail.html — hx-swap="innerHTML" into #task-detail #}
+{% macro status_badge(status) %}
+{% if status == "active" %}<span class="status-badge s-active"><span class="dot dot-green"></span>活跃</span>
+{% elif status == "paused" %}<span class="status-badge s-paused"><i class="bi bi-pause-fill"></i>已暂停</span>
+{% elif status == "completed" %}<span class="status-badge s-completed"><i class="bi bi-check-circle-fill"></i>已完成</span>
+{% elif status == "failed" %}<span class="status-badge s-failed"><i class="bi bi-x-circle-fill"></i>失败</span>
+{% elif status == "cancelled" %}<span class="status-badge s-cancelled"><i class="bi bi-slash-circle"></i>已取消</span>
+{% else %}<span class="status-badge s-cancelled">{{ status }}</span>
+{% endif %}
+{% endmacro %}
+
+{% macro rule_status_badge(rule) %}
+{% if rule.runtime_state.is_complete %}
+<span class="status-badge s-completed"><i class="bi bi-check-circle-fill"></i>已完成</span>
+{% elif rule.runtime_state.is_triggered %}
+<span class="status-badge s-active"><span class="dot dot-green"></span>执行中</span>
+{% elif task.status == "paused" %}
+<span class="status-badge s-paused"><i class="bi bi-pause-fill"></i>已暂停</span>
+{% else %}
+<span class="status-badge s-active"><span class="dot dot-green"></span>监控中</span>
+{% endif %}
+{% endmacro %}
+
+{% macro rule_kind_label(kind) %}
+{% if kind == "breakeven-stop" %}保本止损{% elif kind == "price-stop" %}价格止损
+{% elif kind == "take-profit" %}止盈{% elif kind == "trailing-take-profit" %}追踪止盈
+{% else %}{{ kind }}{% endif %}
+{% endmacro %}
+
+{% macro event_type_label(et) %}
+{% if et == "prepared" %}👁 prepared
+{% elif et == "submitted" %}📤 submitted
+{% elif et == "confirmed" %}✅ confirmed
+{% elif et == "failed" %}❌ failed
+{% else %}{{ et }}{% endif %}
+{% endmacro %}
+
+<div class="detail-section">
+    <!-- Detail bar -->
+    <div class="detail-bar">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span class="detail-title">{{ task.title or ("任务 " ~ task.task_id[:8]) }}</span>
+            {{ status_badge(task.status) }}
+            {% if task.dry_run %}<span class="dry-tag">DRY RUN</span>{% endif %}
+        </div>
+        <div style="display:flex;gap:6px">
+            {% if task.status == "active" %}
+            <button class="btn-ghost btn-action-pause" style="font-size:11px;padding:5px 10px"
+                hx-post="/ui/actions/tasks/{{ task.task_id }}/pause" hx-target="#task-detail" hx-swap="innerHTML"
+                hx-confirm="确定要暂停此任务吗？">
+                <i class="bi bi-pause-fill"></i> 暂停
+            </button>
+            {% elif task.status == "paused" %}
+            <button class="btn-ghost" style="font-size:11px;padding:5px 10px;color:var(--green)"
+                hx-post="/ui/actions/tasks/{{ task.task_id }}/resume" hx-target="#task-detail" hx-swap="innerHTML">
+                <i class="bi bi-play-fill"></i> 恢复
+            </button>
+            <button class="btn-ghost" style="font-size:11px;padding:5px 10px"
+                hx-get="/ui/modals/edit_task/{{ task.task_id }}" hx-target="#modal-slot" hx-swap="innerHTML">
+                <i class="bi bi-pencil"></i> 编辑
+            </button>
+            {% endif %}
+            <button class="btn-ghost btn-action-del" style="font-size:11px;padding:5px 10px"
+                hx-delete="/ui/actions/tasks/{{ task.task_id }}" hx-target="#task-detail" hx-swap="innerHTML"
+                hx-confirm="确定要删除此任务吗？此操作不可撤销。" hx-on::after-request="htmx.trigger('#task-board-wrap','refreshBoard')">
+                <i class="bi bi-trash3"></i> 删除
+            </button>
+        </div>
+    </div>
+
+    <!-- Meta chips -->
+    <div class="info-chips">
+        <span class="chip">滑点: {{ task.slippage_bps }}&nbsp;bps</span>
+        {% if task.position_size %}
+        <span class="chip"><i class="bi bi-coin"></i> 持仓: {{ task.position_size }}</span>
+        {% endif %}
+        {% if task.average_cost %}
+        <span class="chip"><i class="bi bi-graph-down-arrow"></i> 均价: {{ format_cents(task.average_cost) }}</span>
+        {% endif %}
+    </div>
+
+    <div class="section-label">执行时间线</div>
+
+    <div class="timeline-list">
+        {% for rule in task.rules %}
+        {% set rule_records = records_by_rule.get(rule.name, []) %}
+        {% set tl_id = "tl-" ~ task.task_id[:8] ~ "-" ~ loop.index %}
+        <div class="tl-group">
+            <div class="tl-toggle" data-bs-toggle="collapse" data-bs-target="#{{ tl_id }}">
+                {{ rule_status_badge(rule) }}
+                <span class="tl-name">
+                    {{ rule_kind_label(rule.kind) }}
+                    {% if rule.trigger_price %} @{{ format_cents(rule.trigger_price) }}
+                    {% elif rule.drawdown_ratio %} @-{{ (rule.drawdown_ratio | float * 100) | round(0) | int }}%
+                    {% elif rule.kind == "breakeven-stop" %} @均价
+                    {% endif %}
+                    {% if rule.label %} · {{ rule.label }}{% endif %}
+                </span>
+                <span class="tl-meta">
+                    卖出 {{ rule.sell_size }}
+                    {% if rule.runtime_state.remaining_size and rule.runtime_state.remaining_size != rule.sell_size %}
+                    · 剩余 {{ rule.runtime_state.remaining_size }}
+                    {% endif %}
+                </span>
+                <span class="tl-count">{{ rule_records | length }} 条</span>
+                <i class="bi bi-chevron-down chevron"></i>
+            </div>
+            <div class="collapse {% if not rule.runtime_state.is_complete %}show{% endif %}" id="{{ tl_id }}">
+                <div class="tl-body">
+                    {% if rule_records %}
+                    {% for rec in rule_records %}
+                    <div class="tl-entry ev-{{ rec.event_type }}">
+                        <div class="tl-ts">{{ rec.created_at.strftime("%m-%d %H:%M:%S") }}</div>
+                        <div class="tl-type">{{ event_type_label(rec.event_type) }}</div>
+                        <div class="tl-msg">{{ rec.message }}</div>
+                        <div class="tl-prices">
+                            {% if rec.trigger_price and rec.trigger_price != "0" %}
+                            <span>触发价 {{ format_cents(rec.trigger_price) }}</span>
+                            {% endif %}
+                            {% if rec.best_bid and rec.best_bid != "0" %}
+                            <span>最优买价 {{ format_cents(rec.best_bid) }}</span>
+                            {% endif %}
+                            {% if rec.best_ask and rec.best_ask != "0" %}
+                            <span>最优卖价 {{ format_cents(rec.best_ask) }}</span>
+                            {% endif %}
+                            {% if rec.requested_size and rec.requested_size != "0" %}
+                            <span>请求量 {{ rec.requested_size }}</span>
+                            {% endif %}
+                            {% if rec.filled_size and rec.filled_size != "0" %}
+                            <span>成交量 {{ rec.filled_size }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                    {% else %}
+                    <div class="empty-state">
+                        <i class="bi bi-hourglass"></i>
+                        <p>尚无执行记录</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div><!-- /timeline-list -->
+</div><!-- /detail-section -->

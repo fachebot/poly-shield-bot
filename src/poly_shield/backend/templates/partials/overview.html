@@ -1,0 +1,48 @@
+{# partials/overview.html — hx-swap="innerHTML" into #overview-body #}
+<div class="overview-body">
+    <div class="stat-item">
+        <span class="stat-label">总持仓价值</span>
+        <span class="stat-value">{{ total_value }}</span>
+        {% if total_pnl_pct_raw > 0 %}
+        <span class="stat-sub pos"><i class="bi bi-arrow-up-short"></i>{{ total_pnl_pct }}</span>
+        {% elif total_pnl_pct_raw < 0 %} <span class="stat-sub neg"><i class="bi bi-arrow-down-short"></i>{{
+            total_pnl_pct }}</span>
+            {% else %}
+            <span class="stat-sub neu">—</span>
+            {% endif %}
+    </div>
+    <div class="stat-item">
+        <span class="stat-label">总盈亏</span>
+        <span class="stat-value {% if total_pnl_raw > 0 %}val-pos{% elif total_pnl_raw < 0 %}val-neg{% endif %}">
+            {{ total_pnl }}
+        </span>
+        {% if total_pnl_pct_raw > 0 %}
+        <span class="stat-sub pos"><i class="bi bi-arrow-up-short"></i>{{ total_pnl_pct }}</span>
+        {% elif total_pnl_pct_raw < 0 %} <span class="stat-sub neg"><i class="bi bi-arrow-down-short"></i>{{
+            total_pnl_pct }}</span>
+            {% else %}
+            <span class="stat-sub neu">—</span>
+            {% endif %}
+    </div>
+    <div class="stat-item">
+        <span class="stat-label">活跃任务</span>
+        <span class="stat-value">{{ active_count }}</span>
+        <span class="stat-sub neu">{{ paused_count }} 已暂停</span>
+    </div>
+    <div class="stat-item">
+        <span class="stat-label">今日执行</span>
+        <span class="stat-value">{{ executions_today }}</span>
+        <span class="stat-sub neu">{{ confirmed_today }} 已确认</span>
+    </div>
+</div>
+{% if positions_error %}
+<div
+    style="display:flex;align-items:center;gap:8px;padding:8px 20px;background:var(--bg-hover);border-top:1px solid var(--border-light);font-size:12px;color:var(--text-muted)">
+    <i class="bi bi-exclamation-circle" style="color:var(--yellow)"></i>
+    {% if positions_error == 'config' %}
+    持仓数据不可用：未配置 Polymarket 凭据，请在 <code>.env</code> 中设置 PK / API Key
+    {% else %}
+    持仓数据获取失败，请检查网络或代理配置
+    {% endif %}
+</div>
+{% endif %}

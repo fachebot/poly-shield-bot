@@ -180,7 +180,8 @@ class QuoteAwarePositionReader(FakePositionReader):
 
 def test_api_serves_positions_without_frontend_shell(tmp_path) -> None:
     service = TaskService.from_db_path(tmp_path / "poly-shield.db")
-    client = TestClient(create_app(service, position_reader=FakePositionReader()))
+    client = TestClient(create_app(
+        service, position_reader=FakePositionReader()))
 
     positions = client.get("/positions?token_id=token-1")
     index = client.get("/")
@@ -189,7 +190,7 @@ def test_api_serves_positions_without_frontend_shell(tmp_path) -> None:
     assert positions.json()[0]["title"] == "Will it happen?"
     assert positions.json()[0]["event_slug"] == "will-it-happen-event"
     assert positions.json()[0]["current_price"] == "0.55"
-    assert index.status_code == 404
+    assert index.status_code == 200  # UI is now served at /"
 
 
 def test_api_prefers_best_bid_for_position_metrics(tmp_path) -> None:
@@ -255,7 +256,8 @@ def test_api_filters_tasks_and_records_by_token(tmp_path) -> None:
         )
     )
 
-    client = TestClient(create_app(service, position_reader=FakePositionReader()))
+    client = TestClient(create_app(
+        service, position_reader=FakePositionReader()))
     tasks = client.get("/tasks?include_deleted=true&token_id=token-1")
     records = client.get("/records?token_id=token-1")
 
@@ -285,7 +287,8 @@ def test_api_updates_paused_task_in_place(tmp_path) -> None:
         status=TaskStatus.PAUSED,
     )
 
-    client = TestClient(create_app(service, position_reader=FakePositionReader()))
+    client = TestClient(create_app(
+        service, position_reader=FakePositionReader()))
     response = client.put(
         f"/tasks/{task.task_id}",
         json={
@@ -318,7 +321,8 @@ def test_api_updates_paused_task_in_place(tmp_path) -> None:
     assert payload["slippage_bps"] == "75"
     assert payload["position_size"] == "80"
     assert payload["average_cost"] == "0.4"
-    assert [rule["name"] for rule in payload["rules"]] == ["updated-stop", "updated-tp"]
+    assert [rule["name"]
+            for rule in payload["rules"]] == ["updated-stop", "updated-tp"]
 
 
 def test_api_rejects_updating_active_task(tmp_path) -> None:
@@ -336,7 +340,8 @@ def test_api_rejects_updating_active_task(tmp_path) -> None:
         slippage_bps=Decimal("50"),
     )
 
-    client = TestClient(create_app(service, position_reader=FakePositionReader()))
+    client = TestClient(create_app(
+        service, position_reader=FakePositionReader()))
     response = client.put(
         f"/tasks/{task.task_id}",
         json={
@@ -386,7 +391,8 @@ def test_api_exposes_rule_runtime_state_in_task_response(tmp_path) -> None:
         },
     )
 
-    client = TestClient(create_app(service, position_reader=FakePositionReader()))
+    client = TestClient(create_app(
+        service, position_reader=FakePositionReader()))
     response = client.get(f"/tasks/{task.task_id}")
 
     assert response.status_code == 200

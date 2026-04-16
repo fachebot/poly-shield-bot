@@ -1,0 +1,6 @@
+{# partials/runtime_dot.html — hx-swap="outerHTML" replacing the nav span #}
+<span id="runtime-dot" style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-secondary)"
+    hx-get="/ui/panels/runtime_dot" hx-trigger="every 5s" hx-swap="outerHTML">
+    <span class="dot {% if is_running %}dot-green{% else %}dot-gray{% endif %}"></span>
+    {% if is_running %}运行中{% else %}已停止{% endif %}
+</span>
