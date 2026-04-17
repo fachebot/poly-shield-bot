@@ -99,9 +99,16 @@ poly-shield-bot 是一个分层的 Polymarket 自动交易风控系统，包含 
 
 ### 后端服务与运行时
 
-#### server.py - FastAPI HTTP 服务器
+#### server.py - 服务启动入口
 
-- `app` —— FastAPI 应用实例
+- 解析 CLI 参数并加载本地安全设置
+- 启动前输出 signer/funder/signature_type 上下文
+- 校验 signer 配置，不合法时直接拒绝启动
+- 调用 `api.create_app()` 创建 FastAPI 应用，并交给 uvicorn 运行
+
+#### api.py - FastAPI 应用与 HTTP 接口
+
+- `create_app()` —— 创建 FastAPI 应用实例
 - 路由：
   - `GET /` —— Web 控制台首页
   - `GET /health` —— 运行时健康检查
@@ -109,16 +116,8 @@ poly-shield-bot 是一个分层的 Polymarket 自动交易风控系统，包含 
   - `POST /tasks` —— 创建任务
   - `GET /tasks` —— 任务列表
   - `GET /records` —— 执行记录查询
-- CSRF 保护和 Origin 拦截
+- Basic Auth、CSRF 保护和 Origin 拦截
 - 默认监听 `127.0.0.1:8787`
-
-#### api.py - 服务层 API
-
-- `get_positions()` —— 持仓查询（支持内存缓存 + 官方 API 回源）
-- `create_task()` —— 任务创建
-- `list_tasks()` —— 任务列表
-- `get_records()` —— 执行记录查询
-- `get_health()` —— 运行时状态快照
 
 #### runtime.py - 执行运行时
 
@@ -143,7 +142,7 @@ poly-shield-bot 是一个分层的 Polymarket 自动交易风控系统，包含 
 
 #### service.py - 业务逻辑服务
 
-- `PolyshieldService` —— 聚合 runtime、store、polymarket 等依赖
+- `TaskService` —— 聚合 store、任务状态和 runtime 协调所需能力
 - `query_positions()` —— 持仓查询
 - `create_task()` —— 任务创建和启动
 - `list_tasks()` —— 任务查询
