@@ -6,7 +6,9 @@ import base64
 import ctypes
 import json
 import os
+import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from ctypes import wintypes
@@ -15,6 +17,12 @@ from typing import Any
 
 _KEYRING_SERVICE_NAME = "poly-shield-bot"
 _KEYRING_PRIVATE_KEY_ENTRY = "private-key"
+_TPM2_REQUIRED_COMMANDS = (
+    "tpm2_createprimary",
+    "tpm2_create",
+    "tpm2_load",
+    "tpm2_unseal",
+)
 
 
 def _is_windows() -> bool:
@@ -39,9 +47,45 @@ def _normalize_backend(value: str | None) -> str | None:
     if not value:
         return None
     normalized = value.strip().lower()
-    if normalized in {"dpapi", "keyring"}:
+    if normalized in {"dpapi", "keyring", "tpm2"}:
         return normalized
     return normalized
+
+
+def _require_supported_backend(value: str) -> str:
+    if value in {"dpapi", "keyring", "tpm2"}:
+        return value
+    raise RuntimeError(
+        f"unsupported POLY_SECRET_STORE_BACKEND={value}; expected one of dpapi, keyring, tpm2"
+    )
+
+
+def _tpm2_command_path(command: str) -> str | None:
+    from shutil import which
+
+    return which(command)
+
+
+def _require_tpm2_commands() -> None:
+    missing = [
+        cmd for cmd in _TPM2_REQUIRED_COMMANDS if _tpm2_command_path(cmd) is None]
+    if missing:
+        missing_hint = ", ".join(missing)
+        raise RuntimeError(
+            "tpm2 backend requires tpm2-tools in PATH; missing commands: "
+            f"{missing_hint}. install package: tpm2-tools"
+        )
+
+
+def _run_tpm2_command(args: list[str]) -> bytes:
+    result = subprocess.run(args, check=False, capture_output=True)
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+        stdout = result.stdout.decode("utf-8", errors="replace").strip()
+        details = stderr or stdout or "unknown error"
+        raise RuntimeError(
+            f"TPM command failed: {' '.join(args)} :: {details}")
+    return result.stdout
 
 
 def _default_secret_store_path() -> Path:
@@ -66,11 +110,11 @@ class LocalSecretStore:
     def backend(self) -> str:
         forced = _normalize_backend(os.getenv("POLY_SECRET_STORE_BACKEND"))
         if forced:
-            return forced
+            return _require_supported_backend(forced)
         if _is_windows():
             return "dpapi"
         if _is_linux():
-            return "keyring"
+            return "tpm2"
         return "dpapi"
 
     @classmethod
@@ -78,6 +122,8 @@ class LocalSecretStore:
         return cls(_default_secret_store_path())
 
     def load_private_key(self) -> str | None:
+        if self.backend == "tpm2":
+            return self._load_private_key_tpm2()
         if self.backend == "keyring":
             return self._load_private_key_keyring()
         payload = self._read_payload()
@@ -108,6 +154,8 @@ class LocalSecretStore:
         normalized = private_key.strip()
         if not normalized:
             raise ValueError("private key cannot be empty")
+        if self.backend == "tpm2":
+            return self._save_private_key_tpm2(normalized)
         if self.backend == "keyring":
             return self._save_private_key_keyring(normalized)
         if not _is_windows():
@@ -125,6 +173,8 @@ class LocalSecretStore:
         return self.path
 
     def clear_private_key(self) -> bool:
+        if self.backend == "tpm2":
+            return self._clear_private_key_tpm2()
         if self.backend == "keyring":
             return self._clear_private_key_keyring()
         payload = self._read_payload()
@@ -140,6 +190,17 @@ class LocalSecretStore:
         return True
 
     def has_private_key(self) -> bool:
+        if self.backend == "tpm2":
+            payload = self._read_payload()
+            if not payload:
+                return False
+            secret = payload.get("private_key")
+            return bool(
+                isinstance(secret, dict)
+                and secret.get("scheme") == "tpm2"
+                and secret.get("public")
+                and secret.get("private")
+            )
         if self.backend == "keyring":
             keyring = _keyring_module()
             return bool(
@@ -148,6 +209,139 @@ class LocalSecretStore:
             )
         payload = self._read_payload()
         return bool(payload and payload.get("private_key"))
+
+    def _load_private_key_tpm2(self) -> str | None:
+        if not _is_linux():
+            raise RuntimeError("tpm2 backend is only supported on Linux")
+        _require_tpm2_commands()
+        payload = self._read_payload()
+        if payload is None:
+            return None
+        raw_secret = payload.get("private_key")
+        if raw_secret is None:
+            return None
+        if not isinstance(raw_secret, dict):
+            raise RuntimeError(
+                "local secret store is malformed: private_key must be an object")
+        if raw_secret.get("scheme") != "tpm2":
+            raise RuntimeError(
+                f"unsupported local secret store scheme: {raw_secret.get('scheme')}")
+        public_blob = raw_secret.get("public")
+        private_blob = raw_secret.get("private")
+        if not isinstance(public_blob, str) or not isinstance(private_blob, str):
+            raise RuntimeError(
+                "local secret store is malformed: tpm2 public/private blobs are missing")
+
+        with tempfile.TemporaryDirectory(prefix="poly-shield-tpm2-") as temp_dir:
+            temp_path = Path(temp_dir)
+            primary_ctx = temp_path / "primary.ctx"
+            sealed_pub = temp_path / "sealed.pub"
+            sealed_priv = temp_path / "sealed.priv"
+            sealed_ctx = temp_path / "sealed.ctx"
+
+            sealed_pub.write_bytes(
+                base64.urlsafe_b64decode(public_blob.encode("ascii")))
+            sealed_priv.write_bytes(
+                base64.urlsafe_b64decode(private_blob.encode("ascii")))
+
+            _run_tpm2_command([
+                "tpm2_createprimary",
+                "-Q",
+                "-C",
+                "o",
+                "-g",
+                "sha256",
+                "-G",
+                "rsa",
+                "-c",
+                str(primary_ctx),
+            ])
+            _run_tpm2_command([
+                "tpm2_load",
+                "-Q",
+                "-C",
+                str(primary_ctx),
+                "-u",
+                str(sealed_pub),
+                "-r",
+                str(sealed_priv),
+                "-c",
+                str(sealed_ctx),
+            ])
+            unsealed = _run_tpm2_command([
+                "tpm2_unseal",
+                "-Q",
+                "-c",
+                str(sealed_ctx),
+            ])
+            return unsealed.decode("utf-8").strip()
+
+    def _save_private_key_tpm2(self, private_key: str) -> Path:
+        if not _is_linux():
+            raise RuntimeError("tpm2 backend is only supported on Linux")
+        _require_tpm2_commands()
+
+        with tempfile.TemporaryDirectory(prefix="poly-shield-tpm2-") as temp_dir:
+            temp_path = Path(temp_dir)
+            secret_file = temp_path / "secret.txt"
+            primary_ctx = temp_path / "primary.ctx"
+            sealed_pub = temp_path / "sealed.pub"
+            sealed_priv = temp_path / "sealed.priv"
+
+            secret_file.write_text(private_key, encoding="utf-8")
+
+            _run_tpm2_command([
+                "tpm2_createprimary",
+                "-Q",
+                "-C",
+                "o",
+                "-g",
+                "sha256",
+                "-G",
+                "rsa",
+                "-c",
+                str(primary_ctx),
+            ])
+            _run_tpm2_command([
+                "tpm2_create",
+                "-Q",
+                "-C",
+                str(primary_ctx),
+                "-u",
+                str(sealed_pub),
+                "-r",
+                str(sealed_priv),
+                "-i",
+                str(secret_file),
+            ])
+
+            payload = self._read_payload() or {"version": 1}
+            payload["private_key"] = {
+                "scheme": "tpm2",
+                "public": base64.urlsafe_b64encode(
+                    sealed_pub.read_bytes()).decode("ascii"),
+                "private": base64.urlsafe_b64encode(
+                    sealed_priv.read_bytes()).decode("ascii"),
+                "primary_hierarchy": "owner",
+                "primary_alg": "rsa",
+            }
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(json.dumps(
+                payload, indent=2), encoding="utf-8")
+            return self.path
+
+    def _clear_private_key_tpm2(self) -> bool:
+        payload = self._read_payload()
+        if payload is None or "private_key" not in payload:
+            return False
+        payload.pop("private_key", None)
+        remaining_keys = {key for key in payload if key != "version"}
+        if not remaining_keys:
+            if self.path.exists():
+                self.path.unlink()
+            return True
+        self.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return True
 
     def _load_private_key_keyring(self) -> str | None:
         keyring = _keyring_module()

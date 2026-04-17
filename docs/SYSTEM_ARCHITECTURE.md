@@ -55,7 +55,8 @@ poly-shield-bot 是一个分层的 Polymarket 自动交易风控系统，包含 
 
 - `LocalSecretStore` —— 本地化密钥加密存储
 - **Windows** —— DPAPI（Data Protection API，用户+机器绑定）
-- **Linux** —— keyring/SecretService（系统密钥环）
+- **Linux** —— TPM2（默认，机器绑定）
+- **Linux 可选** —— keyring/SecretService（显式指定时使用）
 - 私钥从不在环境变量中明文存储，仅在启动时从加密仓库读取一次
 
 ### 风控规则引擎
@@ -284,10 +285,10 @@ Runtime.initialize() 扫描数据库
 
 ### 私钥管理
 
-| 操作系统 | 存储方式   | 加密机制                    | 特点                                      |
-| -------- | ---------- | --------------------------- | ----------------------------------------- |
-| Windows  | 本地文件   | DPAPI (Data Protection API) | 用户+机器绑定，无法跨用户/机器解密        |
-| Linux    | 系统密钥环 | Secret Service / keyring    | 系统级密钥管理，需要 gnome-keyring 等依赖 |
+| 操作系统 | 存储方式  | 加密机制                    | 特点                                  |
+| -------- | --------- | --------------------------- | ------------------------------------- |
+| Windows  | 本地文件  | DPAPI (Data Protection API) | 用户+机器绑定，无法跨用户/机器解密    |
+| Linux    | TPM2 封装 | tpm2-tools + TPM            | 密文可复制但只能在同一 TPM 设备上解密 |
 
 ### 运行时安全
 

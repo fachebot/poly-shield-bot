@@ -39,7 +39,7 @@ Polymarket 自动止盈止损交易机器人。
 
 ### 安全机制
 
-- 本地密钥存储：Windows 使用 DPAPI，Linux 使用 keyring/SecretService。
+- 本地密钥存储：Windows 使用 DPAPI，Linux 默认使用 TPM2 机器绑定密钥封装。
 - 私钥仅从本地密钥仓库读取，不支持通过环境变量明文注入。
 - 代理钱包支持：按 signature_type 自动推导 effective user address。
 - 本地访问保护：支持 UI Basic Auth、Origin/Referer 拦截和 CSRF 校验。
@@ -103,7 +103,10 @@ poetry run poly-shield secrets clear-private-key
 可选的密钥仓库后端覆盖项：
 
 - POLY_SECRET_STORE_BACKEND=dpapi
+- POLY_SECRET_STORE_BACKEND=tpm2
 - POLY_SECRET_STORE_BACKEND=keyring
+
+Linux 使用 tpm2 后端时需要系统安装 `tpm2-tools` 并且机器具备可用 TPM（或 vTPM）。
 
 ## 运行服务
 

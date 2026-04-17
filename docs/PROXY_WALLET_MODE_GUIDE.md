@@ -5,8 +5,11 @@
 私钥存储后端（用于替代环境变量明文私钥）：
 
 - Windows: DPAPI
-- Linux: keyring / SecretService
-- 可通过 `POLY_SECRET_STORE_BACKEND` 强制指定后端（`dpapi` 或 `keyring`）
+- Linux: TPM2（默认）
+- Linux 可选: keyring / SecretService
+- 可通过 `POLY_SECRET_STORE_BACKEND` 强制指定后端（`dpapi`、`tpm2` 或 `keyring`）
+
+Linux 默认后端 `tpm2` 依赖 `tpm2-tools`，适合纯命令行/服务器环境；私钥密文可复制，但只能在同一台 TPM 设备上解密。
 
 ## 术语
 

@@ -122,6 +122,7 @@ def test_credentials_derives_user_address_from_funder_in_proxy_mode(monkeypatch)
 def test_local_secret_store_round_trip_uses_keyring_backend(tmp_path, monkeypatch) -> None:
     store = LocalSecretStore(tmp_path / "secrets.json")
     state: dict[tuple[str, str], str] = {}
+    monkeypatch.setenv("POLY_SECRET_STORE_BACKEND", "keyring")
 
     class FakeKeyring:
         @staticmethod
@@ -154,6 +155,7 @@ def test_local_secret_store_round_trip_uses_keyring_backend(tmp_path, monkeypatc
 def test_local_secret_store_clear_private_key_keyring_backend(tmp_path, monkeypatch) -> None:
     store = LocalSecretStore(tmp_path / "secrets.json")
     state: dict[tuple[str, str], str] = {}
+    monkeypatch.setenv("POLY_SECRET_STORE_BACKEND", "keyring")
 
     class FakeKeyring:
         @staticmethod
@@ -178,3 +180,47 @@ def test_local_secret_store_clear_private_key_keyring_backend(tmp_path, monkeypa
     assert store.clear_private_key() is True
     assert store.has_private_key() is False
     assert store.path.exists() is False
+
+
+def test_local_secret_store_uses_tpm2_backend_by_default_on_linux(monkeypatch, tmp_path) -> None:
+    store = LocalSecretStore(tmp_path / "secrets.json")
+    monkeypatch.delenv("POLY_SECRET_STORE_BACKEND", raising=False)
+    monkeypatch.setattr("poly_shield.secret_store._is_windows", lambda: False)
+    monkeypatch.setattr("poly_shield.secret_store._is_linux", lambda: True)
+
+    assert store.backend == "tpm2"
+
+
+def test_local_secret_store_routes_to_tpm2_backend(monkeypatch, tmp_path) -> None:
+    store = LocalSecretStore(tmp_path / "secrets.json")
+    called: dict[str, object] = {}
+
+    monkeypatch.setenv("POLY_SECRET_STORE_BACKEND", "tpm2")
+    monkeypatch.setattr("poly_shield.secret_store._is_windows", lambda: False)
+    monkeypatch.setattr("poly_shield.secret_store._is_linux", lambda: True)
+
+    def fake_save(self, private_key: str):
+        called["save"] = private_key
+        return self.path
+
+    def fake_load(self):
+        called["load"] = True
+        return "0xtpm2"
+
+    def fake_clear(self):
+        called["clear"] = True
+        return True
+
+    monkeypatch.setattr(LocalSecretStore, "_save_private_key_tpm2", fake_save)
+    monkeypatch.setattr(LocalSecretStore, "_load_private_key_tpm2", fake_load)
+    monkeypatch.setattr(
+        LocalSecretStore, "_clear_private_key_tpm2", fake_clear)
+
+    assert store.save_private_key("0xabc") == store.path
+    assert store.load_private_key() == "0xtpm2"
+    assert store.clear_private_key() is True
+    assert called == {
+        "save": "0xabc",
+        "load": True,
+        "clear": True,
+    }
