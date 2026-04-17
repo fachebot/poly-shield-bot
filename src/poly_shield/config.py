@@ -6,6 +6,10 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from eth_account import Account
+
+from poly_shield.secret_store import LocalSecretStore
+
 
 DEFAULT_ENV_FILE = Path(".env")
 
@@ -30,6 +34,28 @@ def _env(*names: str, default: str | None = None) -> str | None:
         if value not in {None, ""}:
             return value
     return default
+
+
+def _signer_address_from_private_key(private_key: str | None) -> str | None:
+    if not private_key:
+        return None
+    try:
+        return Account.from_key(private_key).address
+    except Exception:
+        return None
+
+
+def _derive_user_address(
+    *,
+    signer_address: str | None,
+    funder: str | None,
+    signature_type: int | None,
+) -> str | None:
+    # signature_type 1/2 uses proxy wallet semantics; user should be funder/proxy wallet.
+    if signature_type in {1, 2}:
+        return funder
+    # direct-wallet mode defaults to signer; if unavailable, fall back to funder.
+    return signer_address or funder
 
 
 @dataclass(frozen=True)
@@ -58,19 +84,25 @@ class PolymarketCredentials:
                             default="https://data-api.polymarket.com")
         chain_id = int(_env("POLY_CHAIN_ID", default="137") or "137")
         signature_raw = _env("POLY_SIGNATURE_TYPE")
+        signature_type = int(signature_raw) if signature_raw else None
         funder = _env("POLY_FUNDER", "FUNDER")
+        private_key = LocalSecretStore.default().load_private_key()
+        signer_address = _signer_address_from_private_key(private_key)
         return cls(
             host=host or "https://clob.polymarket.com",
             data_api_url=data_api_url or "https://data-api.polymarket.com",
             chain_id=chain_id,
-            private_key=_env("POLY_PRIVATE_KEY", "PK"),
+            private_key=private_key,
             api_key=_env("POLY_API_KEY", "CLOB_API_KEY"),
             api_secret=_env("POLY_API_SECRET", "CLOB_SECRET"),
             api_passphrase=_env("POLY_API_PASSPHRASE", "CLOB_PASS_PHRASE"),
             funder=funder,
-            user_address=_env("POLY_USER_ADDRESS",
-                              "POLY_USER", default=funder),
-            signature_type=int(signature_raw) if signature_raw else None,
+            user_address=_derive_user_address(
+                signer_address=signer_address,
+                funder=funder,
+                signature_type=signature_type,
+            ),
+            signature_type=signature_type,
             http_proxy=_env("POLY_HTTP_PROXY", "HTTP_PROXY", "http_proxy"),
             https_proxy=_env("POLY_HTTPS_PROXY", "HTTPS_PROXY", "https_proxy"),
             no_proxy=_env("POLY_NO_PROXY", "NO_PROXY", "no_proxy"),

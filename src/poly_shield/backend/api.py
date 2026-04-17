@@ -7,14 +7,18 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
+from urllib.parse import urlsplit
+import base64
+import secrets
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from poly_shield.backend.models import ExecutionRecord, ManagedTask, TaskStatus
 from poly_shield.backend.runtime import ManagedTaskRuntime
+from poly_shield.backend.security import LocalAccessSecuritySettings
 from poly_shield.backend.service import TaskConflictError, TaskNotFoundError, TaskService
 from poly_shield.config import PolymarketCredentials
 from poly_shield.polymarket import PolymarketConfigurationError, PolymarketGateway, PolymarketRequestError
@@ -193,6 +197,7 @@ def create_app(
     runtime: ManagedTaskRuntime | None = None,
     *,
     position_reader: PositionReader | None = None,
+    security_settings: LocalAccessSecuritySettings | None = None,
 ) -> FastAPI:
     """创建后端 API 应用。"""
     @asynccontextmanager
@@ -203,8 +208,87 @@ def create_app(
         if runtime is not None:
             await runtime.stop()
 
+    settings = security_settings or LocalAccessSecuritySettings.from_env()
+    _templates.env.globals["csrf_header_name"] = settings.csrf_header_name
+    _templates.env.globals["csrf_cookie_name"] = settings.csrf_cookie_name
     app = FastAPI(title="Poly Shield Backend",
                   version="0.1.0", lifespan=lifespan)
+
+    def _is_unsafe_method(method: str) -> bool:
+        return method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+
+    def _extract_request_origin(req: Request) -> str | None:
+        origin = req.headers.get("origin")
+        if origin:
+            return origin.rstrip("/")
+        referer = req.headers.get("referer")
+        if not referer:
+            return None
+        parsed = urlsplit(referer)
+        if not parsed.scheme or not parsed.netloc:
+            return None
+        return f"{parsed.scheme}://{parsed.netloc}"
+
+    def _expected_origin(req: Request) -> str:
+        url = req.url
+        return f"{url.scheme}://{url.netloc}"
+
+    def _is_ui_path(path: str) -> bool:
+        return path == "/" or path.startswith("/ui/")
+
+    def _has_valid_ui_basic_auth(req: Request) -> bool:
+        if not settings.requires_ui_auth:
+            return True
+        raw = req.headers.get("authorization")
+        if not raw:
+            return False
+        scheme, _, encoded = raw.partition(" ")
+        if scheme.lower() != "basic" or not encoded:
+            return False
+        try:
+            decoded = base64.b64decode(encoded).decode("utf-8")
+        except Exception:
+            return False
+        username, sep, password = decoded.partition(":")
+        if not sep:
+            return False
+        return secrets.compare_digest(username, settings.ui_username) and secrets.compare_digest(password, settings.ui_password or "")
+
+    @app.middleware("http")
+    async def local_access_security_middleware(request: Request, call_next):
+        path = request.url.path
+        method = request.method.upper()
+
+        if _is_ui_path(path) and not _has_valid_ui_basic_auth(request):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "local UI authentication required"},
+                headers={"WWW-Authenticate": "Basic realm=Poly Shield Local"},
+            )
+
+        if settings.enforce_origin_check and _is_unsafe_method(method):
+            request_origin = _extract_request_origin(request)
+            if request_origin is not None and request_origin != _expected_origin(request):
+                return JSONResponse(status_code=403, content={"detail": "cross-origin write request denied"})
+
+        if _is_ui_path(path) and _is_unsafe_method(method):
+            csrf_cookie = request.cookies.get(settings.csrf_cookie_name)
+            csrf_header = request.headers.get(settings.csrf_header_name)
+            if not csrf_cookie or not csrf_header or not secrets.compare_digest(csrf_cookie, csrf_header):
+                return JSONResponse(status_code=403, content={"detail": "missing or invalid CSRF token"})
+
+        response = await call_next(request)
+
+        if not request.cookies.get(settings.csrf_cookie_name):
+            response.set_cookie(
+                key=settings.csrf_cookie_name,
+                value=secrets.token_urlsafe(32),
+                httponly=False,
+                secure=False,
+                samesite="lax",
+                path="/",
+            )
+        return response
 
     async def refresh_runtime() -> None:
         if runtime is not None:
@@ -242,6 +326,12 @@ def create_app(
             "status": "ok",
             "restored_task_count": service.restored_task_count,
             "active_task_ids": sorted(service.active_tasks),
+            "local_security": {
+                "ui_auth_enabled": settings.requires_ui_auth,
+                "origin_check_enabled": settings.enforce_origin_check,
+                "csrf_header_name": settings.csrf_header_name,
+                "csrf_cookie_name": settings.csrf_cookie_name,
+            },
         }
         if runtime is not None:
             payload["runtime"] = runtime.snapshot()

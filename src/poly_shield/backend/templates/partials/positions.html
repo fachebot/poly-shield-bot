@@ -14,7 +14,7 @@
             {% if positions_error == 'config' %}未配置 Polymarket 凭据{% else %}获取持仓数据失败{% endif %}
         </p>
         <p style="font-size:11px;color:var(--text-muted);margin:2px 0 0;text-align:center">
-            {% if positions_error == 'config' %}请在 .env 中配置 PK 或 API Key{% else %}请检查网络或代理设置{% endif %}
+            {% if positions_error == 'config' %}请先写入本地私钥仓库或配置 API Key{% else %}请检查网络或代理设置{% endif %}
         </p>
     </div>
     {% elif positions %}

@@ -18,7 +18,8 @@ def test_task_service_restores_active_tasks_from_store(tmp_path) -> None:
     )
     service.create_task(
         token_id="token-2",
-        rules=(ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("25"), trigger_price=Decimal("0.7")),),
+        rules=(ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal(
+            "25"), trigger_price=Decimal("0.7")),),
         dry_run=True,
         slippage_bps=Decimal("50"),
         status=TaskStatus.PAUSED,
@@ -42,7 +43,8 @@ def test_task_service_rejects_duplicate_active_token(tmp_path) -> None:
     with pytest.raises(TaskConflictError, match="already has an active task"):
         service.create_task(
             token_id="token-1",
-            rules=(ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("25"), trigger_price=Decimal("0.7")),),
+            rules=(ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal(
+                "25"), trigger_price=Decimal("0.7")),),
             dry_run=True,
             slippage_bps=Decimal("50"),
         )
@@ -52,7 +54,8 @@ def test_task_service_pause_resume_and_record_append(tmp_path) -> None:
     service = TaskService.from_db_path(tmp_path / "poly-shield.db")
     task = service.create_task(
         token_id="token-3",
-        rules=(ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("25"), trigger_price=Decimal("0.7")),),
+        rules=(ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal(
+            "25"), trigger_price=Decimal("0.7")),),
         dry_run=False,
         slippage_bps=Decimal("25"),
     )
@@ -86,7 +89,8 @@ def test_task_service_runtime_changes_and_lease(tmp_path) -> None:
     service = TaskService.from_db_path(tmp_path / "poly-shield.db")
     task = service.create_task(
         token_id="token-4",
-        rules=(ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("25"), trigger_price=Decimal("0.7")),),
+        rules=(ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal(
+            "25"), trigger_price=Decimal("0.7")),),
         dry_run=False,
         slippage_bps=Decimal("25"),
     )
@@ -114,7 +118,8 @@ def test_task_service_runtime_changes_and_lease(tmp_path) -> None:
                 message="paused for test",
             ),
         ),
-        attempts=(attempt.evolve(status=ExecutionAttemptStatus.NEEDS_REVIEW, message="needs review"),),
+        attempts=(attempt.evolve(
+            status=ExecutionAttemptStatus.NEEDS_REVIEW, message="needs review"),),
         task_status=TaskStatus.PAUSED,
     )
     lease = service.acquire_runtime_lease("backend-runtime", "owner-1", 15)
@@ -124,5 +129,5 @@ def test_task_service_runtime_changes_and_lease(tmp_path) -> None:
     assert lease.owner_id == "owner-1"
 
     another_service = TaskService.from_db_path(tmp_path / "poly-shield.db")
-    with pytest.raises(RuntimeLeaseConflictError):
+    with pytest.raises(RuntimeLeaseConflictError, match="existing Poly Shield runtime may still be running or the previous lease has not expired yet"):
         another_service.acquire_runtime_lease("backend-runtime", "owner-2", 15)

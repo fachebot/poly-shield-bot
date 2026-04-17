@@ -2,7 +2,7 @@ import json
 from argparse import Namespace
 from decimal import Decimal
 
-from poly_shield.cli import _emit_watch_events, build_rules, handle_tasks_add, handle_tasks_list
+from poly_shield.cli import _emit_watch_events, build_rules, handle_secrets_clear_private_key, handle_secrets_inspect_private_key, handle_secrets_set_private_key, handle_secrets_status, handle_tasks_add, handle_tasks_list
 from poly_shield.quotes import OrderBookLevel
 from poly_shield.rules import RuleKind
 from poly_shield.watcher import WatchEvent
@@ -41,8 +41,10 @@ def test_emit_watch_events_prints_top_of_book(capsys) -> None:
                 status="waiting",
                 best_bid=Decimal("0.064"),
                 best_ask=Decimal("0.066"),
-                top_bids=(OrderBookLevel(price=Decimal("0.064"), size=Decimal("109.75")),),
-                top_asks=(OrderBookLevel(price=Decimal("0.066"), size=Decimal("21.03")),),
+                top_bids=(OrderBookLevel(price=Decimal(
+                    "0.064"), size=Decimal("109.75")),),
+                top_asks=(OrderBookLevel(price=Decimal(
+                    "0.066"), size=Decimal("21.03")),),
                 message="waiting for trigger",
                 trigger_price=Decimal("0.07"),
             )
@@ -66,7 +68,8 @@ def test_handle_tasks_add_posts_serialized_rules(monkeypatch, capsys) -> None:
         captured["payload"] = payload
         return {"task_id": "task-1", "status": "active"}
 
-    monkeypatch.setattr("poly_shield.cli._backend_request", fake_backend_request)
+    monkeypatch.setattr("poly_shield.cli._backend_request",
+                        fake_backend_request)
 
     args = Namespace(
         api_url="http://127.0.0.1:8787",
@@ -110,11 +113,93 @@ def test_handle_tasks_list_builds_query_string(monkeypatch, capsys) -> None:
         captured["payload"] = payload
         return [{"task_id": "task-1", "status": "active"}]
 
-    monkeypatch.setattr("poly_shield.cli._backend_request", fake_backend_request)
+    monkeypatch.setattr("poly_shield.cli._backend_request",
+                        fake_backend_request)
 
-    handle_tasks_list(Namespace(api_url="http://127.0.0.1:8787", status="active", all=False))
+    handle_tasks_list(
+        Namespace(api_url="http://127.0.0.1:8787", status="active", all=False))
     payload = json.loads(capsys.readouterr().out)
 
     assert payload == [{"task_id": "task-1", "status": "active"}]
     assert captured["method"] == "GET"
     assert captured["path"] == "/tasks?status=active"
+
+
+def test_handle_secrets_set_private_key_saves_value(monkeypatch, capsys) -> None:
+    captured = {}
+
+    class FakeStore:
+        path = "C:/fake/secrets.json"
+
+        def save_private_key(self, value: str):
+            captured["value"] = value
+            return self.path
+
+    monkeypatch.setattr(
+        "poly_shield.cli.LocalSecretStore.default", lambda: FakeStore())
+
+    handle_secrets_set_private_key(Namespace(value="0xabc123"))
+    payload = json.loads(capsys.readouterr().out)
+
+    assert captured["value"] == "0xabc123"
+    assert payload == {"status": "saved", "path": "C:/fake/secrets.json"}
+
+
+def test_handle_secrets_status_includes_backend(monkeypatch, capsys) -> None:
+    class FakeStore:
+        path = "C:/fake/secrets.json"
+        backend = "keyring"
+
+        def has_private_key(self) -> bool:
+            return True
+
+    monkeypatch.setattr(
+        "poly_shield.cli.LocalSecretStore.default", lambda: FakeStore())
+
+    handle_secrets_status(Namespace())
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload == {
+        "path": "C:/fake/secrets.json",
+        "backend": "keyring",
+        "has_private_key": True,
+    }
+
+
+def test_handle_secrets_clear_private_key_reports_status(monkeypatch, capsys) -> None:
+    class FakeStore:
+        path = "C:/fake/secrets.json"
+
+        def clear_private_key(self) -> bool:
+            return True
+
+    monkeypatch.setattr(
+        "poly_shield.cli.LocalSecretStore.default", lambda: FakeStore())
+
+    handle_secrets_clear_private_key(Namespace())
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload == {"status": "cleared", "path": "C:/fake/secrets.json"}
+
+
+def test_handle_secrets_inspect_private_key_reports_address(monkeypatch, capsys) -> None:
+    class FakeStore:
+        def load_private_key(self) -> str:
+            return "0x" + "11" * 32
+
+    monkeypatch.setattr(
+        "poly_shield.wallet_identity.LocalSecretStore.default", lambda: FakeStore())
+    monkeypatch.setenv(
+        "POLY_FUNDER", "0x2222222222222222222222222222222222222222")
+    monkeypatch.setenv("POLY_SIGNATURE_TYPE", "1")
+
+    handle_secrets_inspect_private_key(Namespace())
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["status"] == "valid"
+    assert payload["source"] == "local-secret-store"
+    assert payload["signer_address"] == "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A"
+    assert payload["signature_type"] == "1"
+    assert payload["proxy_wallet_mode"] is True
+    assert payload["signer_matches_funder"] is False
+    assert payload["effective_user_address"] == "0x2222222222222222222222222222222222222222"

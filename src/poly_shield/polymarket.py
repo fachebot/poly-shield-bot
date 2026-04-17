@@ -150,7 +150,7 @@ class PolymarketGateway:
         """交易客户端用于余额、下单和 heartbeat，需要签名能力。"""
         if not self.credentials.private_key:
             raise PolymarketConfigurationError(
-                "POLY_PRIVATE_KEY or PK is required for authenticated operations")
+                "a private key in local secret store is required for authenticated operations")
         if not self.credentials.funder:
             raise PolymarketConfigurationError(
                 "POLY_FUNDER or FUNDER is required for authenticated operations")
@@ -248,7 +248,8 @@ class PolymarketGateway:
         """通过 Gamma API 根据 clob_token_id 查询市场标题（question）。"""
         try:
             base_url = "https://gamma-api.polymarket.com/markets/keyset"
-            params = urlencode({"clob_token_ids": [token_id], "limit": "1"}, doseq=True)
+            params = urlencode(
+                {"clob_token_ids": [token_id], "limit": "1"}, doseq=True)
             url = f"{base_url}?{params}"
             response = self._bundle.http_helpers.get(url)
             markets = response.get("markets", [])
@@ -421,7 +422,7 @@ class PolymarketGateway:
         user_address = self.credentials.user_address or self.credentials.funder
         if not user_address:
             raise PolymarketConfigurationError(
-                "POLY_USER_ADDRESS, POLY_USER, or POLY_FUNDER is required for positions queries"
+                "unable to derive user address for positions queries; set POLY_FUNDER (proxy mode) or a valid private key (direct mode)"
             )
         return user_address
 

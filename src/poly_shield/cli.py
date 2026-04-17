@@ -3,7 +3,9 @@ from __future__ import annotations
 """命令行入口，负责把用户输入组装成规则、持仓源和执行器。"""
 
 import argparse
+import getpass
 import json
+import os
 import sys
 import time
 from decimal import Decimal
@@ -17,6 +19,8 @@ from poly_shield.polymarket import PolymarketGateway
 from poly_shield.positions import GatewayPositionProvider, ManualPositionProvider
 from poly_shield.quotes import OrderBookLevel
 from poly_shield.rules import ExitRule, RuleKind, ZERO
+from poly_shield.secret_store import LocalSecretStore
+from poly_shield.wallet_identity import inspect_effective_signer
 from poly_shield.watcher import WatchTask, Watcher
 
 
@@ -41,6 +45,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--port", type=int, default=8787, help="后端服务监听端口")
     serve_parser.add_argument(
         "--db-path", default="data/poly-shield.db", help="SQLite 数据库路径")
+    serve_parser.add_argument(
+        "--ui-username",
+        default="admin",
+        help="本地 UI Basic Auth 用户名（默认 admin）",
+    )
+    serve_parser.add_argument(
+        "--ui-password",
+        default=None,
+        help="本地 UI Basic Auth 密码；留空则不启用 UI 口令",
+    )
     serve_parser.set_defaults(handler=handle_serve)
 
     positions_parser = subparsers.add_parser(
@@ -135,6 +149,30 @@ def build_parser() -> argparse.ArgumentParser:
     records_parser.add_argument(
         "--limit", type=int, default=100, help="最多返回多少条记录")
     records_parser.set_defaults(handler=handle_records_list)
+
+    secrets_parser = subparsers.add_parser(
+        "secrets", help="管理本地加密凭证仓库")
+    secrets_subparsers = secrets_parser.add_subparsers(
+        dest="secrets_command", required=True)
+
+    secrets_status_parser = secrets_subparsers.add_parser(
+        "status", help="查看本地私钥密文仓库状态")
+    secrets_status_parser.set_defaults(handler=handle_secrets_status)
+
+    secrets_inspect_parser = secrets_subparsers.add_parser(
+        "inspect-private-key", help="校验当前有效私钥并输出对应以太坊地址")
+    secrets_inspect_parser.set_defaults(
+        handler=handle_secrets_inspect_private_key)
+
+    secrets_set_parser = secrets_subparsers.add_parser(
+        "set-private-key", help="将私钥写入本地加密仓库（Windows DPAPI）")
+    secrets_set_parser.add_argument(
+        "--value", help="直接传入私钥；不传则走安全输入")
+    secrets_set_parser.set_defaults(handler=handle_secrets_set_private_key)
+
+    secrets_clear_parser = secrets_subparsers.add_parser(
+        "clear-private-key", help="清除本地加密仓库中的私钥")
+    secrets_clear_parser.set_defaults(handler=handle_secrets_clear_private_key)
 
     return parser
 
@@ -309,7 +347,10 @@ def handle_serve(args: argparse.Namespace) -> int:
             str(args.port),
             "--db-path",
             args.db_path,
+            "--ui-username",
+            args.ui_username,
         ]
+        + (["--ui-password", args.ui_password] if args.ui_password else [])
     )
 
 
@@ -424,6 +465,54 @@ def handle_records_list(args: argparse.Namespace) -> int:
         path=f"/records?{parse.urlencode(query)}",
     )
     print(json.dumps(response, indent=2))
+    return 0
+
+
+def handle_secrets_status(_: argparse.Namespace) -> int:
+    """查看本地密文仓库状态。"""
+    store = LocalSecretStore.default()
+    print(json.dumps({
+        "path": str(store.path),
+        "backend": store.backend,
+        "has_private_key": store.has_private_key(),
+    }, indent=2))
+    return 0
+
+
+def handle_secrets_inspect_private_key(_: argparse.Namespace) -> int:
+    """校验当前有效私钥，并输出 signer 地址与代理钱包相关信息。"""
+    try:
+        payload = inspect_effective_signer()
+    except Exception as exc:
+        raise RuntimeError(f"invalid private key: {exc}") from exc
+    if payload["status"] == "missing":
+        raise RuntimeError(
+            "no effective private key found in the local secret store"
+        )
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def handle_secrets_set_private_key(args: argparse.Namespace) -> int:
+    """把私钥写入本地 DPAPI 加密仓库。"""
+    private_key = args.value or getpass.getpass("Polymarket private key: ")
+    store = LocalSecretStore.default()
+    path = store.save_private_key(private_key)
+    print(json.dumps({
+        "status": "saved",
+        "path": str(path),
+    }, indent=2))
+    return 0
+
+
+def handle_secrets_clear_private_key(_: argparse.Namespace) -> int:
+    """清除本地密文仓库中的私钥。"""
+    store = LocalSecretStore.default()
+    cleared = store.clear_private_key()
+    print(json.dumps({
+        "status": "cleared" if cleared else "empty",
+        "path": str(store.path),
+    }, indent=2))
     return 0
 
 

@@ -1,4 +1,5 @@
 from decimal import Decimal
+import base64
 
 from contextlib import AbstractAsyncContextManager
 
@@ -6,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from poly_shield.backend.api import create_app
 from poly_shield.backend.models import ExecutionRecord, TaskStatus
+from poly_shield.backend.security import LocalAccessSecuritySettings
 from poly_shield.backend.service import TaskService
 from poly_shield.positions import PositionRecord
 from poly_shield.rules import ExitRule, RuleKind, RuleState
@@ -421,3 +423,68 @@ def test_api_rejects_legacy_sell_ratio_payload(tmp_path) -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_api_requires_basic_auth_for_ui_when_password_configured(tmp_path) -> None:
+    service = TaskService.from_db_path(tmp_path / "poly-shield.db")
+    app = create_app(
+        service,
+        security_settings=LocalAccessSecuritySettings(
+            ui_username="local",
+            ui_password="secret",
+            enforce_origin_check=True,
+        ),
+    )
+    client = TestClient(app)
+
+    unauthorized = client.get("/")
+    assert unauthorized.status_code == 401
+
+    basic_token = base64.b64encode(b"local:secret").decode("utf-8")
+    authorized = client.get(
+        "/", headers={"Authorization": f"Basic {basic_token}"})
+    assert authorized.status_code == 200
+
+
+def test_api_blocks_cross_origin_write_requests(tmp_path) -> None:
+    service = TaskService.from_db_path(tmp_path / "poly-shield.db")
+    client = TestClient(create_app(service))
+
+    response = client.post(
+        "/tasks",
+        json={
+            "token_id": "token-origin",
+            "dry_run": True,
+            "slippage_bps": "50",
+            "rules": [{"kind": "breakeven-stop", "sell_size": "5"}],
+        },
+        headers={"Origin": "https://evil.example"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "cross-origin write request denied"
+
+
+def test_api_rejects_ui_write_without_csrf_token(tmp_path) -> None:
+    service = TaskService.from_db_path(tmp_path / "poly-shield.db")
+    task = service.create_task(
+        token_id="token-ui-csrf",
+        rules=(
+            ExitRule(
+                kind=RuleKind.BREAKEVEN_STOP,
+                sell_size=Decimal("1"),
+            ),
+        ),
+        dry_run=True,
+        slippage_bps=Decimal("50"),
+    )
+    client = TestClient(create_app(
+        service, position_reader=FakePositionReader()))
+
+    response = client.post(
+        f"/ui/actions/tasks/{task.task_id}/pause",
+        headers={"Origin": "http://testserver"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "missing or invalid CSRF token"

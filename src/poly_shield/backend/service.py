@@ -249,7 +249,7 @@ class TaskService:
             lease_key, owner_id, ttl_seconds)
         if lease is None:
             raise RuntimeLeaseConflictError(
-                f"runtime lease {lease_key} is already held by another instance"
+                f"runtime lease {lease_key} is already held by another instance; an existing Poly Shield runtime may still be running or the previous lease has not expired yet"
             )
         return lease
 
