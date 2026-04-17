@@ -17,6 +17,7 @@ from typing import Any
 
 _KEYRING_SERVICE_NAME = "poly-shield-bot"
 _KEYRING_PRIVATE_KEY_ENTRY = "private-key"
+_KEYRING_TELEGRAM_BOT_TOKEN_ENTRY = "telegram-bot-token"
 _TPM2_REQUIRED_COMMANDS = (
     "tpm2_createprimary",
     "tpm2_create",
@@ -123,26 +124,117 @@ class LocalSecretStore:
 
     def load_private_key(self) -> str | None:
         if self.backend == "tpm2":
-            return self._load_private_key_tpm2()
+            return self._load_secret_tpm2("private_key")
         if self.backend == "keyring":
-            return self._load_private_key_keyring()
+            return self._load_secret_keyring(
+                secret_name="private_key",
+                keyring_entry=_KEYRING_PRIVATE_KEY_ENTRY,
+            )
+        return self._load_secret_dpapi("private_key")
+
+    def save_private_key(self, private_key: str) -> Path:
+        normalized = private_key.strip()
+        if not normalized:
+            raise ValueError("private key cannot be empty")
+        if self.backend == "tpm2":
+            return self._save_secret_tpm2("private_key", normalized)
+        if self.backend == "keyring":
+            return self._save_secret_keyring(
+                secret_name="private_key",
+                keyring_entry=_KEYRING_PRIVATE_KEY_ENTRY,
+                value=normalized,
+            )
+        return self._save_secret_dpapi("private_key", normalized)
+
+    def clear_private_key(self) -> bool:
+        if self.backend == "tpm2":
+            return self._clear_secret_tpm2("private_key")
+        if self.backend == "keyring":
+            return self._clear_secret_keyring(
+                secret_name="private_key",
+                keyring_entry=_KEYRING_PRIVATE_KEY_ENTRY,
+            )
+        return self._clear_secret_payload_entry("private_key")
+
+    def has_private_key(self) -> bool:
+        return self._has_named_secret("private_key")
+
+    def load_telegram_bot_token(self) -> str | None:
+        if self.backend == "tpm2":
+            return self._load_secret_tpm2("telegram_bot_token")
+        if self.backend == "keyring":
+            return self._load_secret_keyring(
+                secret_name="telegram_bot_token",
+                keyring_entry=_KEYRING_TELEGRAM_BOT_TOKEN_ENTRY,
+            )
+        return self._load_secret_dpapi("telegram_bot_token")
+
+    def save_telegram_bot_token(self, token: str) -> Path:
+        normalized = token.strip()
+        if not normalized:
+            raise ValueError("telegram bot token cannot be empty")
+        if self.backend == "tpm2":
+            return self._save_secret_tpm2("telegram_bot_token", normalized)
+        if self.backend == "keyring":
+            return self._save_secret_keyring(
+                secret_name="telegram_bot_token",
+                keyring_entry=_KEYRING_TELEGRAM_BOT_TOKEN_ENTRY,
+                value=normalized,
+            )
+        return self._save_secret_dpapi("telegram_bot_token", normalized)
+
+    def clear_telegram_bot_token(self) -> bool:
+        if self.backend == "tpm2":
+            return self._clear_secret_tpm2("telegram_bot_token")
+        if self.backend == "keyring":
+            return self._clear_secret_keyring(
+                secret_name="telegram_bot_token",
+                keyring_entry=_KEYRING_TELEGRAM_BOT_TOKEN_ENTRY,
+            )
+        return self._clear_secret_payload_entry("telegram_bot_token")
+
+    def has_telegram_bot_token(self) -> bool:
+        return self._has_named_secret("telegram_bot_token")
+
+    def _has_named_secret(self, secret_name: str) -> bool:
+        if self.backend == "tpm2":
+            payload = self._read_payload()
+            if not payload:
+                return False
+            secret = payload.get(secret_name)
+            return bool(
+                isinstance(secret, dict)
+                and secret.get("scheme") == "tpm2"
+                and secret.get("public")
+                and secret.get("private")
+            )
+        if self.backend == "keyring":
+            entry_name = _KEYRING_PRIVATE_KEY_ENTRY
+            if secret_name == "telegram_bot_token":
+                entry_name = _KEYRING_TELEGRAM_BOT_TOKEN_ENTRY
+            keyring = _keyring_module()
+            return bool(keyring.get_password(_KEYRING_SERVICE_NAME, entry_name))
+        payload = self._read_payload()
+        return bool(payload and payload.get(secret_name))
+
+    def _load_secret_dpapi(self, secret_name: str) -> str | None:
         payload = self._read_payload()
         if payload is None:
             return None
-        raw_secret = payload.get("private_key")
+        raw_secret = payload.get(secret_name)
         if raw_secret is None:
             return None
         if not isinstance(raw_secret, dict):
             raise RuntimeError(
-                "local secret store is malformed: private_key must be an object")
+                f"local secret store is malformed: {secret_name} must be an object")
         scheme = raw_secret.get("scheme")
         ciphertext = raw_secret.get("ciphertext")
         if scheme != "dpapi":
             raise RuntimeError(
-                f"unsupported local secret store scheme: {scheme}")
+                f"unsupported local secret store scheme for {secret_name}: {scheme}")
         if not isinstance(ciphertext, str) or not ciphertext:
             raise RuntimeError(
-                "local secret store is malformed: ciphertext is missing")
+                f"local secret store is malformed: {secret_name} ciphertext is missing")
         if not _is_windows():
             raise RuntimeError(
                 "this local secret store was encrypted with Windows DPAPI and can only be read on Windows")
@@ -150,37 +242,27 @@ class LocalSecretStore:
             base64.urlsafe_b64decode(ciphertext.encode("ascii")))
         return decrypted.decode("utf-8")
 
-    def save_private_key(self, private_key: str) -> Path:
-        normalized = private_key.strip()
-        if not normalized:
-            raise ValueError("private key cannot be empty")
-        if self.backend == "tpm2":
-            return self._save_private_key_tpm2(normalized)
-        if self.backend == "keyring":
-            return self._save_private_key_keyring(normalized)
+    def _save_secret_dpapi(self, secret_name: str, value: str) -> Path:
         if not _is_windows():
             raise RuntimeError(
-                "local encrypted private-key storage currently supports Windows DPAPI only")
+                "local encrypted secret storage currently supports Windows DPAPI only"
+            )
         payload = self._read_payload() or {"version": 1}
-        payload["private_key"] = {
+        payload[secret_name] = {
             "scheme": "dpapi",
             "ciphertext": base64.urlsafe_b64encode(
-                _protect_bytes_for_current_user(normalized.encode("utf-8"))
+                _protect_bytes_for_current_user(value.encode("utf-8"))
             ).decode("ascii"),
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return self.path
 
-    def clear_private_key(self) -> bool:
-        if self.backend == "tpm2":
-            return self._clear_private_key_tpm2()
-        if self.backend == "keyring":
-            return self._clear_private_key_keyring()
+    def _clear_secret_payload_entry(self, secret_name: str) -> bool:
         payload = self._read_payload()
-        if payload is None or "private_key" not in payload:
+        if payload is None or secret_name not in payload:
             return False
-        payload.pop("private_key", None)
+        payload.pop(secret_name, None)
         remaining_keys = {key for key in payload if key != "version"}
         if not remaining_keys:
             if self.path.exists():
@@ -189,48 +271,27 @@ class LocalSecretStore:
         self.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return True
 
-    def has_private_key(self) -> bool:
-        if self.backend == "tpm2":
-            payload = self._read_payload()
-            if not payload:
-                return False
-            secret = payload.get("private_key")
-            return bool(
-                isinstance(secret, dict)
-                and secret.get("scheme") == "tpm2"
-                and secret.get("public")
-                and secret.get("private")
-            )
-        if self.backend == "keyring":
-            keyring = _keyring_module()
-            return bool(
-                keyring.get_password(_KEYRING_SERVICE_NAME,
-                                     _KEYRING_PRIVATE_KEY_ENTRY)
-            )
-        payload = self._read_payload()
-        return bool(payload and payload.get("private_key"))
-
-    def _load_private_key_tpm2(self) -> str | None:
+    def _load_secret_tpm2(self, secret_name: str) -> str | None:
         if not _is_linux():
             raise RuntimeError("tpm2 backend is only supported on Linux")
         _require_tpm2_commands()
         payload = self._read_payload()
         if payload is None:
             return None
-        raw_secret = payload.get("private_key")
+        raw_secret = payload.get(secret_name)
         if raw_secret is None:
             return None
         if not isinstance(raw_secret, dict):
             raise RuntimeError(
-                "local secret store is malformed: private_key must be an object")
+                f"local secret store is malformed: {secret_name} must be an object")
         if raw_secret.get("scheme") != "tpm2":
             raise RuntimeError(
-                f"unsupported local secret store scheme: {raw_secret.get('scheme')}")
+                f"unsupported local secret store scheme for {secret_name}: {raw_secret.get('scheme')}")
         public_blob = raw_secret.get("public")
         private_blob = raw_secret.get("private")
         if not isinstance(public_blob, str) or not isinstance(private_blob, str):
             raise RuntimeError(
-                "local secret store is malformed: tpm2 public/private blobs are missing")
+                f"local secret store is malformed: {secret_name} tpm2 public/private blobs are missing")
 
         with tempfile.TemporaryDirectory(prefix="poly-shield-tpm2-") as temp_dir:
             temp_path = Path(temp_dir)
@@ -276,7 +337,7 @@ class LocalSecretStore:
             ])
             return unsealed.decode("utf-8").strip()
 
-    def _save_private_key_tpm2(self, private_key: str) -> Path:
+    def _save_secret_tpm2(self, secret_name: str, value: str) -> Path:
         if not _is_linux():
             raise RuntimeError("tpm2 backend is only supported on Linux")
         _require_tpm2_commands()
@@ -288,7 +349,7 @@ class LocalSecretStore:
             sealed_pub = temp_path / "sealed.pub"
             sealed_priv = temp_path / "sealed.priv"
 
-            secret_file.write_text(private_key, encoding="utf-8")
+            secret_file.write_text(value, encoding="utf-8")
 
             _run_tpm2_command([
                 "tpm2_createprimary",
@@ -316,7 +377,7 @@ class LocalSecretStore:
             ])
 
             payload = self._read_payload() or {"version": 1}
-            payload["private_key"] = {
+            payload[secret_name] = {
                 "scheme": "tpm2",
                 "public": base64.urlsafe_b64encode(
                     sealed_pub.read_bytes()).decode("ascii"),
@@ -330,60 +391,45 @@ class LocalSecretStore:
                 payload, indent=2), encoding="utf-8")
             return self.path
 
-    def _clear_private_key_tpm2(self) -> bool:
-        payload = self._read_payload()
-        if payload is None or "private_key" not in payload:
-            return False
-        payload.pop("private_key", None)
-        remaining_keys = {key for key in payload if key != "version"}
-        if not remaining_keys:
-            if self.path.exists():
-                self.path.unlink()
-            return True
-        self.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        return True
+    def _clear_secret_tpm2(self, secret_name: str) -> bool:
+        return self._clear_secret_payload_entry(secret_name)
 
-    def _load_private_key_keyring(self) -> str | None:
+    def _load_secret_keyring(self, *, secret_name: str, keyring_entry: str) -> str | None:
         keyring = _keyring_module()
         value = keyring.get_password(
             _KEYRING_SERVICE_NAME,
-            _KEYRING_PRIVATE_KEY_ENTRY,
+            keyring_entry,
         )
         if value in {None, ""}:
             return None
         return str(value)
 
-    def _save_private_key_keyring(self, private_key: str) -> Path:
+    def _save_secret_keyring(self, *, secret_name: str, keyring_entry: str, value: str) -> Path:
         keyring = _keyring_module()
         keyring.set_password(
             _KEYRING_SERVICE_NAME,
-            _KEYRING_PRIVATE_KEY_ENTRY,
-            private_key,
+            keyring_entry,
+            value,
         )
-        payload = {
-            "version": 1,
-            "private_key": {
-                "scheme": "keyring",
-                "service": _KEYRING_SERVICE_NAME,
-                "entry": _KEYRING_PRIVATE_KEY_ENTRY,
-            },
+        payload = self._read_payload() or {"version": 1}
+        payload[secret_name] = {
+            "scheme": "keyring",
+            "service": _KEYRING_SERVICE_NAME,
+            "entry": keyring_entry,
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return self.path
 
-    def _clear_private_key_keyring(self) -> bool:
+    def _clear_secret_keyring(self, *, secret_name: str, keyring_entry: str) -> bool:
         keyring = _keyring_module()
-        had_value = bool(
-            keyring.get_password(_KEYRING_SERVICE_NAME,
-                                 _KEYRING_PRIVATE_KEY_ENTRY)
-        )
+        had_value = bool(keyring.get_password(
+            _KEYRING_SERVICE_NAME, keyring_entry))
         if had_value:
-            keyring.delete_password(
-                _KEYRING_SERVICE_NAME, _KEYRING_PRIVATE_KEY_ENTRY)
+            keyring.delete_password(_KEYRING_SERVICE_NAME, keyring_entry)
         payload = self._read_payload()
-        if payload and "private_key" in payload:
-            payload.pop("private_key", None)
+        if payload and secret_name in payload:
+            payload.pop(secret_name, None)
             remaining_keys = {key for key in payload if key != "version"}
             if remaining_keys:
                 self.path.write_text(json.dumps(

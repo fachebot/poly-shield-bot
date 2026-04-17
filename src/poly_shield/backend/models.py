@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """后端任务、状态和审计记录的数据模型。"""
 
+import json
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -228,3 +229,141 @@ class RuntimeLease:
     owner_id: str
     expires_at: datetime
     updated_at: datetime
+
+
+class NotificationChannel(StrEnum):
+    """通知投递通道。"""
+
+    TELEGRAM = "telegram"
+
+
+class NotificationDeliveryStatus(StrEnum):
+    """通知出站队列状态。"""
+
+    PENDING = "pending"
+    DELIVERED = "delivered"
+
+
+@dataclass(frozen=True)
+class TelegramRecipient:
+    """允许接收 Telegram 通知的已注册用户。"""
+
+    recipient_id: str
+    telegram_user_id: int
+    chat_id: int
+    chat_type: str = "private"
+    is_active: bool = True
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        telegram_user_id: int,
+        chat_id: int,
+        chat_type: str = "private",
+        is_active: bool = True,
+    ) -> "TelegramRecipient":
+        timestamp = utc_now()
+        return cls(
+            recipient_id=new_identifier(),
+            telegram_user_id=telegram_user_id,
+            chat_id=chat_id,
+            chat_type=chat_type,
+            is_active=is_active,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+
+    def refresh_registration(
+        self,
+        *,
+        chat_id: int,
+        chat_type: str = "private",
+        is_active: bool = True,
+    ) -> "TelegramRecipient":
+        return replace(
+            self,
+            chat_id=chat_id,
+            chat_type=chat_type,
+            is_active=is_active,
+            updated_at=utc_now(),
+        )
+
+
+@dataclass(frozen=True)
+class NotificationOutboxEntry:
+    """待投递的通知出站记录。"""
+
+    notification_id: str
+    channel: NotificationChannel
+    recipient_id: str
+    dedupe_key: str
+    category: str
+    title: str
+    body: str
+    task_id: str | None = None
+    record_id: str | None = None
+    payload_json: str = "{}"
+    status: NotificationDeliveryStatus = NotificationDeliveryStatus.PENDING
+    attempt_count: int = 0
+    created_at: datetime = field(default_factory=utc_now)
+    available_at: datetime = field(default_factory=utc_now)
+    delivered_at: datetime | None = None
+    last_error: str = ""
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        channel: NotificationChannel,
+        recipient_id: str,
+        dedupe_key: str,
+        category: str,
+        title: str,
+        body: str,
+        task_id: str | None = None,
+        record_id: str | None = None,
+        payload: dict[str, object] | None = None,
+        available_at: datetime | None = None,
+    ) -> "NotificationOutboxEntry":
+        timestamp = utc_now()
+        return cls(
+            notification_id=new_identifier(),
+            channel=channel,
+            recipient_id=recipient_id,
+            dedupe_key=dedupe_key,
+            category=category,
+            title=title,
+            body=body,
+            task_id=task_id,
+            record_id=record_id,
+            payload_json=json.dumps(payload or {}, sort_keys=True),
+            created_at=timestamp,
+            available_at=available_at or timestamp,
+        )
+
+    def mark_delivered(self) -> "NotificationOutboxEntry":
+        return replace(
+            self,
+            status=NotificationDeliveryStatus.DELIVERED,
+            attempt_count=self.attempt_count + 1,
+            delivered_at=utc_now(),
+            last_error="",
+        )
+
+    def mark_for_retry(
+        self,
+        *,
+        last_error: str,
+        available_at: datetime,
+    ) -> "NotificationOutboxEntry":
+        return replace(
+            self,
+            status=NotificationDeliveryStatus.PENDING,
+            attempt_count=self.attempt_count + 1,
+            available_at=available_at,
+            delivered_at=None,
+            last_error=last_error,
+        )

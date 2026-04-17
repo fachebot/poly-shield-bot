@@ -36,6 +36,33 @@ def _env(*names: str, default: str | None = None) -> str | None:
     return default
 
 
+def apply_proxy_environment_values(
+    *,
+    http_proxy: str | None = None,
+    https_proxy: str | None = None,
+    no_proxy: str | None = None,
+) -> None:
+    """把代理配置同步到标准 HTTP(S)_PROXY 环境变量。"""
+    if http_proxy:
+        os.environ["HTTP_PROXY"] = http_proxy
+        os.environ["http_proxy"] = http_proxy
+    if https_proxy:
+        os.environ["HTTPS_PROXY"] = https_proxy
+        os.environ["https_proxy"] = https_proxy
+    if no_proxy:
+        os.environ["NO_PROXY"] = no_proxy
+        os.environ["no_proxy"] = no_proxy
+
+
+def apply_proxy_environment_from_env() -> None:
+    """把项目代理环境变量同步到标准 HTTP(S)_PROXY 环境变量。"""
+    apply_proxy_environment_values(
+        http_proxy=_env("POLY_HTTP_PROXY", "HTTP_PROXY", "http_proxy"),
+        https_proxy=_env("POLY_HTTPS_PROXY", "HTTPS_PROXY", "https_proxy"),
+        no_proxy=_env("POLY_NO_PROXY", "NO_PROXY", "no_proxy"),
+    )
+
+
 def _signer_address_from_private_key(private_key: str | None) -> str | None:
     if not private_key:
         return None
@@ -122,12 +149,8 @@ class PolymarketCredentials:
 
     def apply_proxy_environment(self) -> None:
         """把项目内的代理配置同步到标准 HTTP(S)_PROXY 环境变量。"""
-        if self.http_proxy:
-            os.environ["HTTP_PROXY"] = self.http_proxy
-            os.environ["http_proxy"] = self.http_proxy
-        if self.https_proxy:
-            os.environ["HTTPS_PROXY"] = self.https_proxy
-            os.environ["https_proxy"] = self.https_proxy
-        if self.no_proxy:
-            os.environ["NO_PROXY"] = self.no_proxy
-            os.environ["no_proxy"] = self.no_proxy
+        apply_proxy_environment_values(
+            http_proxy=self.http_proxy,
+            https_proxy=self.https_proxy,
+            no_proxy=self.no_proxy,
+        )

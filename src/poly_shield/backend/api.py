@@ -20,6 +20,7 @@ from poly_shield.backend.models import ExecutionRecord, ManagedTask, TaskStatus
 from poly_shield.backend.runtime import ManagedTaskRuntime
 from poly_shield.backend.security import LocalAccessSecuritySettings
 from poly_shield.backend.service import TaskConflictError, TaskNotFoundError, TaskService
+from poly_shield.backend.telegram_bot import TelegramBotController
 from poly_shield.config import PolymarketCredentials
 from poly_shield.polymarket import PolymarketConfigurationError, PolymarketGateway, PolymarketRequestError
 from poly_shield.positions import PositionReader, PositionRecord
@@ -198,13 +199,18 @@ def create_app(
     *,
     position_reader: PositionReader | None = None,
     security_settings: LocalAccessSecuritySettings | None = None,
+    telegram_bot: TelegramBotController | None = None,
 ) -> FastAPI:
     """创建后端 API 应用。"""
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         if runtime is not None:
             await runtime.start()
+        if telegram_bot is not None:
+            await telegram_bot.start()
         yield
+        if telegram_bot is not None:
+            await telegram_bot.stop()
         if runtime is not None:
             await runtime.stop()
 
@@ -331,10 +337,16 @@ def create_app(
                 "origin_check_enabled": settings.enforce_origin_check,
                 "csrf_header_name": settings.csrf_header_name,
                 "csrf_cookie_name": settings.csrf_cookie_name,
+                "telegram_enabled": settings.telegram_enabled,
+                "telegram_whitelist_enabled": settings.telegram_whitelist_enabled,
+                "telegram_whitelist_size": len(settings.telegram_allowed_user_ids),
+                "telegram_poll_interval_seconds": settings.telegram_poll_interval_seconds,
             },
         }
         if runtime is not None:
             payload["runtime"] = runtime.snapshot()
+        if telegram_bot is not None:
+            payload["telegram"] = telegram_bot.snapshot()
         return payload
 
     @app.get("/positions", response_model=list[PositionResponse])

@@ -13,9 +13,13 @@ from poly_shield.backend.models import (
     ExecutionAttemptStatus,
     ExecutionRecord,
     ManagedTask,
+    NotificationChannel,
+    NotificationDeliveryStatus,
+    NotificationOutboxEntry,
     PersistedRuleState,
     RuntimeLease,
     TaskStatus,
+    TelegramRecipient,
     new_identifier,
     utc_now,
 )
@@ -56,6 +60,7 @@ class SQLiteTaskStore:
         status: TaskStatus = TaskStatus.ACTIVE,
         task_id: str | None = None,
         title: str | None = None,
+        notifications: tuple[NotificationOutboxEntry, ...] = (),
     ) -> ManagedTask:
         """写入一条新任务及其规则定义。"""
         created_at = utc_now()
@@ -131,6 +136,9 @@ class SQLiteTaskStore:
                     for rule in task.rules
                 ],
             )
+            for notification in notifications:
+                self._insert_notification_outbox_entry(
+                    connection, notification)
         return task
 
     def upsert_execution_attempt(self, attempt: ExecutionAttempt) -> ExecutionAttempt:
@@ -196,6 +204,7 @@ class SQLiteTaskStore:
         states: dict[str, RuleState] | None = None,
         records: tuple[ExecutionRecord, ...] = (),
         attempts: tuple[ExecutionAttempt, ...] = (),
+        notifications: tuple[NotificationOutboxEntry, ...] = (),
         task_status: TaskStatus | None = None,
     ) -> ManagedTask:
         """在单个事务内落库任务运行态、执行记录、意图和状态。"""
@@ -258,6 +267,9 @@ class SQLiteTaskStore:
                 )
             for attempt in attempts:
                 self._upsert_execution_attempt(connection, attempt)
+            for notification in notifications:
+                self._insert_notification_outbox_entry(
+                    connection, notification)
             if records:
                 connection.executemany(
                     """
@@ -313,6 +325,164 @@ class SQLiteTaskStore:
             ).fetchone()
             assert refreshed is not None
             return self._build_task(connection, refreshed)
+
+    def upsert_telegram_recipient(
+        self,
+        *,
+        telegram_user_id: int,
+        chat_id: int,
+        chat_type: str = "private",
+        is_active: bool = True,
+    ) -> TelegramRecipient:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT recipient_id, telegram_user_id, chat_id, chat_type,
+                       is_active, created_at, updated_at
+                FROM telegram_recipients
+                WHERE telegram_user_id = ?
+                """,
+                (telegram_user_id,),
+            ).fetchone()
+            if row is None:
+                recipient = TelegramRecipient.create(
+                    telegram_user_id=telegram_user_id,
+                    chat_id=chat_id,
+                    chat_type=chat_type,
+                    is_active=is_active,
+                )
+                connection.execute(
+                    """
+                    INSERT INTO telegram_recipients (
+                        recipient_id,
+                        telegram_user_id,
+                        chat_id,
+                        chat_type,
+                        is_active,
+                        created_at,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        recipient.recipient_id,
+                        recipient.telegram_user_id,
+                        recipient.chat_id,
+                        recipient.chat_type,
+                        int(recipient.is_active),
+                        _to_iso(recipient.created_at),
+                        _to_iso(recipient.updated_at),
+                    ),
+                )
+                return recipient
+            recipient = self._build_telegram_recipient(row).refresh_registration(
+                chat_id=chat_id,
+                chat_type=chat_type,
+                is_active=is_active,
+            )
+            connection.execute(
+                """
+                UPDATE telegram_recipients
+                SET chat_id = ?, chat_type = ?, is_active = ?, updated_at = ?
+                WHERE recipient_id = ?
+                """,
+                (
+                    recipient.chat_id,
+                    recipient.chat_type,
+                    int(recipient.is_active),
+                    _to_iso(recipient.updated_at),
+                    recipient.recipient_id,
+                ),
+            )
+            return recipient
+
+    def list_telegram_recipients(self, *, only_active: bool = True) -> list[TelegramRecipient]:
+        query = """
+            SELECT recipient_id, telegram_user_id, chat_id, chat_type,
+                   is_active, created_at, updated_at
+            FROM telegram_recipients
+        """
+        parameters: list[object] = []
+        if only_active:
+            query += " WHERE is_active = ?"
+            parameters.append(1)
+        query += " ORDER BY created_at ASC"
+        with self._connect() as connection:
+            rows = connection.execute(query, parameters).fetchall()
+        return [self._build_telegram_recipient(row) for row in rows]
+
+    def enqueue_notification_outbox(
+        self,
+        entries: tuple[NotificationOutboxEntry, ...],
+    ) -> tuple[NotificationOutboxEntry, ...]:
+        if not entries:
+            return ()
+        with self._connect() as connection:
+            for entry in entries:
+                self._insert_notification_outbox_entry(connection, entry)
+        return entries
+
+    def list_notification_outbox(
+        self,
+        *,
+        status: NotificationDeliveryStatus | None = None,
+        channel: NotificationChannel | None = None,
+        ready_only: bool = False,
+        limit: int = 100,
+    ) -> list[NotificationOutboxEntry]:
+        query = """
+            SELECT notification_id, channel, recipient_id, dedupe_key, category,
+                   title, body, task_id, record_id, payload_json, status,
+                   attempt_count, created_at, available_at, delivered_at, last_error
+            FROM notification_outbox
+        """
+        parameters: list[object] = []
+        clauses: list[str] = []
+        if status is not None:
+            clauses.append("status = ?")
+            parameters.append(status.value)
+        if channel is not None:
+            clauses.append("channel = ?")
+            parameters.append(channel.value)
+        if ready_only:
+            clauses.append("available_at <= ?")
+            parameters.append(_to_iso(utc_now()))
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY available_at ASC, created_at ASC LIMIT ?"
+        parameters.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(query, parameters).fetchall()
+        return [self._build_notification_outbox_entry(row) for row in rows]
+
+    def update_notification_outbox_entry(
+        self,
+        entry: NotificationOutboxEntry,
+    ) -> NotificationOutboxEntry:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE notification_outbox
+                SET status = ?, attempt_count = ?, available_at = ?, delivered_at = ?,
+                    last_error = ?, title = ?, body = ?, payload_json = ?
+                WHERE notification_id = ?
+                """,
+                (
+                    entry.status.value,
+                    entry.attempt_count,
+                    _to_iso(entry.available_at),
+                    None if entry.delivered_at is None else _to_iso(
+                        entry.delivered_at),
+                    entry.last_error,
+                    entry.title,
+                    entry.body,
+                    entry.payload_json,
+                    entry.notification_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(
+                    f"unknown notification_id: {entry.notification_id}")
+        return entry
 
     def acquire_runtime_lease(self, lease_key: str, owner_id: str, ttl_seconds: int) -> RuntimeLease | None:
         """尝试获取运行时租约；如果已被其它存活实例占用，则返回 None。"""
@@ -448,6 +618,16 @@ class SQLiteTaskStore:
 
     def update_task_status(self, task_id: str, status: TaskStatus) -> ManagedTask:
         """更新任务状态。"""
+        return self.update_task_status_with_notifications(task_id, status, notifications=())
+
+    def update_task_status_with_notifications(
+        self,
+        task_id: str,
+        status: TaskStatus,
+        *,
+        notifications: tuple[NotificationOutboxEntry, ...],
+    ) -> ManagedTask:
+        """更新任务状态，并在同一事务中落出站通知。"""
         updated_at = utc_now()
         with self._connect() as connection:
             cursor = connection.execute(
@@ -460,6 +640,9 @@ class SQLiteTaskStore:
             )
             if cursor.rowcount != 1:
                 raise KeyError(f"unknown task_id: {task_id}")
+            for notification in notifications:
+                self._insert_notification_outbox_entry(
+                    connection, notification)
         task = self.get_task(task_id)
         assert task is not None
         return task
@@ -473,6 +656,7 @@ class SQLiteTaskStore:
         slippage_bps: Decimal,
         position_size: Decimal | None = None,
         average_cost: Decimal | None = None,
+        notifications: tuple[NotificationOutboxEntry, ...] = (),
     ) -> ManagedTask:
         """替换任务定义，并清空旧的规则运行态。"""
         updated_at = utc_now()
@@ -529,6 +713,9 @@ class SQLiteTaskStore:
             )
             connection.execute(
                 "DELETE FROM task_states WHERE task_id = ?", (task_id,))
+            for notification in notifications:
+                self._insert_notification_outbox_entry(
+                    connection, notification)
         task = self.get_task(task_id)
         assert task is not None
         return task
@@ -597,7 +784,12 @@ class SQLiteTaskStore:
             for row in rows
         }
 
-    def append_execution_record(self, record: ExecutionRecord) -> ExecutionRecord:
+    def append_execution_record(
+        self,
+        record: ExecutionRecord,
+        *,
+        notifications: tuple[NotificationOutboxEntry, ...] = (),
+    ) -> ExecutionRecord:
         """保存单次执行审计记录。"""
         with self._connect() as connection:
             connection.execute(
@@ -640,6 +832,9 @@ class SQLiteTaskStore:
                     _to_iso(record.created_at),
                 ),
             )
+            for notification in notifications:
+                self._insert_notification_outbox_entry(
+                    connection, notification)
         return record
 
     def list_execution_records(
@@ -785,9 +980,43 @@ class SQLiteTaskStore:
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS telegram_recipients (
+                    recipient_id TEXT PRIMARY KEY,
+                    telegram_user_id INTEGER NOT NULL UNIQUE,
+                    chat_id INTEGER NOT NULL,
+                    chat_type TEXT NOT NULL,
+                    is_active INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS notification_outbox (
+                    notification_id TEXT PRIMARY KEY,
+                    channel TEXT NOT NULL,
+                    recipient_id TEXT NOT NULL,
+                    dedupe_key TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    task_id TEXT,
+                    record_id TEXT,
+                    payload_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    attempt_count INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    available_at TEXT NOT NULL,
+                    delivered_at TEXT,
+                    last_error TEXT NOT NULL,
+                    FOREIGN KEY (recipient_id) REFERENCES telegram_recipients(recipient_id) ON DELETE CASCADE,
+                    FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
                 CREATE INDEX IF NOT EXISTS idx_execution_records_task_created_at ON execution_records(task_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_execution_attempts_task_status ON execution_attempts(task_id, status, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_telegram_recipients_active ON telegram_recipients(is_active, created_at ASC);
+                CREATE INDEX IF NOT EXISTS idx_notification_outbox_status_available ON notification_outbox(status, available_at ASC, created_at ASC);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_outbox_dedupe ON notification_outbox(channel, recipient_id, dedupe_key);
                 """
             )
             columns = {
@@ -819,6 +1048,53 @@ class SQLiteTaskStore:
             if "event_price" not in record_columns:
                 connection.execute(
                     "ALTER TABLE execution_records ADD COLUMN event_price TEXT NOT NULL DEFAULT '0'")
+
+    def _insert_notification_outbox_entry(
+        self,
+        connection: sqlite3.Connection,
+        entry: NotificationOutboxEntry,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO notification_outbox (
+                notification_id,
+                channel,
+                recipient_id,
+                dedupe_key,
+                category,
+                title,
+                body,
+                task_id,
+                record_id,
+                payload_json,
+                status,
+                attempt_count,
+                created_at,
+                available_at,
+                delivered_at,
+                last_error
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                entry.notification_id,
+                entry.channel.value,
+                entry.recipient_id,
+                entry.dedupe_key,
+                entry.category,
+                entry.title,
+                entry.body,
+                entry.task_id,
+                entry.record_id,
+                entry.payload_json,
+                entry.status.value,
+                entry.attempt_count,
+                _to_iso(entry.created_at),
+                _to_iso(entry.available_at),
+                None if entry.delivered_at is None else _to_iso(
+                    entry.delivered_at),
+                entry.last_error,
+            ),
+        )
 
     def _upsert_execution_attempt(self, connection: sqlite3.Connection, attempt: ExecutionAttempt) -> None:
         connection.execute(
@@ -888,6 +1164,41 @@ class SQLiteTaskStore:
             message=row["message"],
             created_at=_from_iso(row["created_at"]),
             updated_at=_from_iso(row["updated_at"]),
+        )
+
+    def _build_telegram_recipient(self, row: sqlite3.Row) -> TelegramRecipient:
+        return TelegramRecipient(
+            recipient_id=row["recipient_id"],
+            telegram_user_id=int(row["telegram_user_id"]),
+            chat_id=int(row["chat_id"]),
+            chat_type=row["chat_type"],
+            is_active=bool(row["is_active"]),
+            created_at=_from_iso(row["created_at"]),
+            updated_at=_from_iso(row["updated_at"]),
+        )
+
+    def _build_notification_outbox_entry(
+        self,
+        row: sqlite3.Row,
+    ) -> NotificationOutboxEntry:
+        return NotificationOutboxEntry(
+            notification_id=row["notification_id"],
+            channel=NotificationChannel(row["channel"]),
+            recipient_id=row["recipient_id"],
+            dedupe_key=row["dedupe_key"],
+            category=row["category"],
+            title=row["title"],
+            body=row["body"],
+            task_id=row["task_id"],
+            record_id=row["record_id"],
+            payload_json=row["payload_json"],
+            status=NotificationDeliveryStatus(row["status"]),
+            attempt_count=int(row["attempt_count"]),
+            created_at=_from_iso(row["created_at"]),
+            available_at=_from_iso(row["available_at"]),
+            delivered_at=None if row["delivered_at"] is None else _from_iso(
+                row["delivered_at"]),
+            last_error=row["last_error"],
         )
 
     def _build_task(self, connection: sqlite3.Connection, row: sqlite3.Row) -> ManagedTask:

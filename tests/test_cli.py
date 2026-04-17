@@ -2,7 +2,7 @@ import json
 from argparse import Namespace
 from decimal import Decimal
 
-from poly_shield.cli import _emit_watch_events, build_rules, handle_secrets_clear_private_key, handle_secrets_inspect_private_key, handle_secrets_set_private_key, handle_secrets_status, handle_tasks_add, handle_tasks_list
+from poly_shield.cli import _emit_watch_events, build_rules, handle_secrets_clear_private_key, handle_secrets_clear_telegram_bot_token, handle_secrets_inspect_private_key, handle_secrets_set_private_key, handle_secrets_set_telegram_bot_token, handle_secrets_status, handle_tasks_add, handle_tasks_list
 from poly_shield.quotes import OrderBookLevel
 from poly_shield.rules import RuleKind
 from poly_shield.watcher import WatchEvent
@@ -153,6 +153,9 @@ def test_handle_secrets_status_includes_backend(monkeypatch, capsys) -> None:
         def has_private_key(self) -> bool:
             return True
 
+        def has_telegram_bot_token(self) -> bool:
+            return True
+
     monkeypatch.setattr(
         "poly_shield.cli.LocalSecretStore.default", lambda: FakeStore())
 
@@ -163,6 +166,7 @@ def test_handle_secrets_status_includes_backend(monkeypatch, capsys) -> None:
         "path": "C:/fake/secrets.json",
         "backend": "keyring",
         "has_private_key": True,
+        "has_telegram_bot_token": True,
     }
 
 
@@ -177,6 +181,42 @@ def test_handle_secrets_clear_private_key_reports_status(monkeypatch, capsys) ->
         "poly_shield.cli.LocalSecretStore.default", lambda: FakeStore())
 
     handle_secrets_clear_private_key(Namespace())
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload == {"status": "cleared", "path": "C:/fake/secrets.json"}
+
+
+def test_handle_secrets_set_telegram_bot_token_saves_value(monkeypatch, capsys) -> None:
+    captured = {}
+
+    class FakeStore:
+        path = "C:/fake/secrets.json"
+
+        def save_telegram_bot_token(self, value: str):
+            captured["value"] = value
+            return self.path
+
+    monkeypatch.setattr(
+        "poly_shield.cli.LocalSecretStore.default", lambda: FakeStore())
+
+    handle_secrets_set_telegram_bot_token(Namespace(value="123:bot-token"))
+    payload = json.loads(capsys.readouterr().out)
+
+    assert captured["value"] == "123:bot-token"
+    assert payload == {"status": "saved", "path": "C:/fake/secrets.json"}
+
+
+def test_handle_secrets_clear_telegram_bot_token_reports_status(monkeypatch, capsys) -> None:
+    class FakeStore:
+        path = "C:/fake/secrets.json"
+
+        def clear_telegram_bot_token(self) -> bool:
+            return True
+
+    monkeypatch.setattr(
+        "poly_shield.cli.LocalSecretStore.default", lambda: FakeStore())
+
+    handle_secrets_clear_telegram_bot_token(Namespace())
     payload = json.loads(capsys.readouterr().out)
 
     assert payload == {"status": "cleared", "path": "C:/fake/secrets.json"}

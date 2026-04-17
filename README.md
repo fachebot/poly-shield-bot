@@ -28,6 +28,13 @@ Polymarket 自动止盈止损交易机器人。
 - 执行时间线：分页查看执行记录和 system 事件。
 - 健康状态面板：显示 runtime、订阅状态和 freshness 信息。
 
+### Telegram Bot
+
+- 白名单控制：只有配置在 Telegram 白名单中的用户才能操作 bot。
+- 私聊约束：bot 仅接受 private chat，避免群聊误触发。
+- 移动端任务管理：支持 /create、/edit 向导和 /pause、/resume、/delete 控制命令。
+- 事件通知：任务状态变化和执行记录会异步投递到已登记的 Telegram 会话。
+
 ### 命令行工具
 
 - watch：适合单次联调，支持 --dry-run 和 --run-once。
@@ -41,6 +48,7 @@ Polymarket 自动止盈止损交易机器人。
 
 - 本地密钥存储：Windows 使用 DPAPI，Linux 默认使用 TPM2 机器绑定密钥封装。
 - 私钥仅从本地密钥仓库读取，不支持通过环境变量明文注入。
+- Telegram bot token 也存储在本地加密仓库，不通过 `.env` 明文注入。
 - 代理钱包支持：按 signature_type 自动推导 effective user address。
 - 本地访问保护：支持 UI Basic Auth、Origin/Referer 拦截和 CSRF 校验。
 
@@ -74,6 +82,8 @@ user address 现在由程序自动推导：
 - POLY_HTTPS_PROXY
 - POLY_NO_PROXY
 
+这些代理变量同样会用于 Telegram bot 访问 Telegram API。
+
 ## 私钥配置
 
 私钥不再从 `.env` 读取，必须写入本地加密仓库：
@@ -98,6 +108,26 @@ poetry run poly-shield secrets inspect-private-key
 
 ```bash
 poetry run poly-shield secrets clear-private-key
+```
+
+写入 Telegram bot token：
+
+```bash
+poetry run poly-shield secrets set-telegram-bot-token
+```
+
+确认本地密钥仓库状态：
+
+```bash
+poetry run poly-shield secrets status
+```
+
+输出里如果 `has_telegram_bot_token` 为 `true`，说明 Telegram token 已就位。
+
+清除 Telegram bot token：
+
+```bash
+poetry run poly-shield secrets clear-telegram-bot-token
 ```
 
 可选的密钥仓库后端覆盖项：
@@ -144,6 +174,57 @@ poetry run poly-shield serve --ui-username admin --ui-password "change-me"
 ```text
 http://127.0.0.1:8787/
 ```
+
+## 启用 Telegram Bot
+
+Telegram bot 与 Web/UI 共用同一个 `serve` 进程，不需要单独起服务。最少需要以下三项：
+
+- 本地已保存 Telegram bot token
+- `POLY_TELEGRAM_ENABLED=true`
+- `POLY_TELEGRAM_ALLOWED_USER_IDS` 非空
+
+示例：
+
+```env
+POLY_TELEGRAM_ENABLED=true
+POLY_TELEGRAM_ALLOWED_USER_IDS=123456789,987654321
+POLY_TELEGRAM_POLL_INTERVAL_SECONDS=5
+```
+
+说明：
+
+- `POLY_TELEGRAM_ALLOWED_USER_IDS` 使用逗号分隔的 Telegram 数字 user id。
+- 白名单字段使用 `message.from.id`，不要填用户名。
+- `POLY_TELEGRAM_POLL_INTERVAL_SECONDS` 可选，默认 `5` 秒。
+
+建议的启用顺序：
+
+1. 在 BotFather 创建 bot，拿到 token。
+2. 运行 `poetry run poly-shield secrets set-telegram-bot-token` 写入本地加密仓库。
+3. 配置 `POLY_TELEGRAM_ENABLED=true` 和 `POLY_TELEGRAM_ALLOWED_USER_IDS`。
+4. 启动 `poetry run poly-shield serve`。
+5. 每个白名单用户先给 bot 发一次 `/start`，完成 chat 注册并接收后续通知。
+
+如果 Telegram 已启用但缺少白名单或本地 token，`serve` 会直接拒绝启动。
+
+白名单 user id 的获取方法和完整运维说明见 [docs/TELEGRAM_BOT_OPERATIONS.md](docs/TELEGRAM_BOT_OPERATIONS.md)。
+
+## Telegram 命令速览
+
+- `/start`：登记当前私聊会话并返回帮助。
+- `/help`：查看命令列表。
+- `/health`：查看 runtime、recipient 和 Telegram 运行状态。
+- `/tasks [status]`：列出任务，可按 `active`、`paused` 等状态过滤。
+- `/task <task_id>`：查看单个任务详情和规则状态。
+- `/records [task_id]`：查看最近执行记录。
+- `/create`：进入移动端任务创建向导。
+- `/edit <task_id>`：编辑已暂停任务。
+- `/pause <task_id>`：暂停任务。
+- `/resume <task_id>`：恢复任务。
+- `/delete <task_id>`：删除任务。
+- `/cancel`：取消当前创建或编辑向导。
+
+完整命令说明、向导输入规则和排障流程见 [docs/TELEGRAM_BOT_OPERATIONS.md](docs/TELEGRAM_BOT_OPERATIONS.md)。
 
 ## 常用命令
 
@@ -230,6 +311,7 @@ watch 的持仓来源规则如下：
 
 - [docs/PROXY_WALLET_MODE_GUIDE.md](docs/PROXY_WALLET_MODE_GUIDE.md) —— 代理钱包配置说明。
 - [docs/STOP_LOSS_TAKE_PROFIT_GUIDE.md](docs/STOP_LOSS_TAKE_PROFIT_GUIDE.md) —— 止损止盈规则参数和示例。
+- [docs/TELEGRAM_BOT_OPERATIONS.md](docs/TELEGRAM_BOT_OPERATIONS.md) —— Telegram bot 启用、白名单、命令和运维说明。
 - [docs/SYSTEM_ARCHITECTURE.md](docs/SYSTEM_ARCHITECTURE.md) —— 系统架构、模块关系与数据流。
 - [docs/INTEGRATION_TEST_PLAN.md](docs/INTEGRATION_TEST_PLAN.md) —— CLI、后端、WebSocket 集成测试计划。
 - [docs/ACCEPTANCE_CHECKLIST.md](docs/ACCEPTANCE_CHECKLIST.md) —— 换账号或换环境时的验收清单。

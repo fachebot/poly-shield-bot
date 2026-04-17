@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 
-from poly_shield.backend.models import ExecutionAttempt, ExecutionAttemptStatus, ExecutionRecord, ManagedTask, RuntimeLease, TaskStatus
+from poly_shield.backend.models import ExecutionAttempt, ExecutionAttemptStatus, ExecutionRecord, ManagedTask, NotificationChannel, NotificationDeliveryStatus, NotificationOutboxEntry, RuntimeLease, TaskStatus, TelegramRecipient, new_identifier, utc_now
 from poly_shield.backend.store import SQLiteTaskStore
 from poly_shield.rules import ExitRule, RuleState
 from poly_shield.watcher import WatchTask
@@ -77,6 +77,7 @@ class TaskService:
                 title = gateway.get_market_title(token_id)
             except Exception:
                 title = None
+        assigned_task_id = new_identifier()
         task = self.store.create_task(
             token_id=token_id,
             rules=rules,
@@ -85,7 +86,19 @@ class TaskService:
             position_size=position_size,
             average_cost=average_cost,
             status=status,
+            task_id=assigned_task_id,
             title=title,
+            notifications=self._build_task_lifecycle_notifications(
+                task_id=assigned_task_id,
+                token_id=token_id,
+                title=title,
+                status=status,
+                action="created",
+                body_lines=(
+                    f"dry_run: {dry_run}",
+                    f"rule_count: {len(rules)}",
+                ),
+            ),
         )
         if task.status is TaskStatus.ACTIVE:
             self.active_tasks[task.task_id] = task
@@ -154,13 +167,35 @@ class TaskService:
             slippage_bps=slippage_bps,
             position_size=position_size,
             average_cost=average_cost,
+            notifications=self._build_task_lifecycle_notifications(
+                task_id=task.task_id,
+                token_id=task.token_id,
+                title=task.title,
+                status=task.status,
+                action="updated",
+                body_lines=(
+                    f"dry_run: {dry_run}",
+                    f"rule_count: {len(rules)}",
+                ),
+            ),
         )
         self.active_tasks.pop(task_id, None)
         return updated
 
     def set_task_status(self, task_id: str, status: TaskStatus) -> ManagedTask:
         """统一更新任务状态，并同步内存注册表。"""
-        updated = self.store.update_task_status(task_id, status)
+        task = self.get_task(task_id)
+        updated = self.store.update_task_status_with_notifications(
+            task_id,
+            status,
+            notifications=self._build_task_lifecycle_notifications(
+                task_id=task.task_id,
+                token_id=task.token_id,
+                title=task.title,
+                status=status,
+                action=f"status:{status.value}",
+            ),
+        )
         if status is TaskStatus.ACTIVE:
             self.active_tasks[task_id] = updated
         else:
@@ -207,7 +242,51 @@ class TaskService:
     def append_execution_record(self, record: ExecutionRecord) -> ExecutionRecord:
         """写入执行记录。"""
         self.get_task(record.task_id)
-        return self.store.append_execution_record(record)
+        return self.store.append_execution_record(
+            record,
+            notifications=self._build_record_notifications(
+                task=self.get_task(record.task_id),
+                records=(record,),
+            ),
+        )
+
+    def register_telegram_recipient(
+        self,
+        *,
+        telegram_user_id: int,
+        chat_id: int,
+        chat_type: str = "private",
+    ) -> TelegramRecipient:
+        return self.store.upsert_telegram_recipient(
+            telegram_user_id=telegram_user_id,
+            chat_id=chat_id,
+            chat_type=chat_type,
+            is_active=True,
+        )
+
+    def list_telegram_recipients(self, *, only_active: bool = True) -> list[TelegramRecipient]:
+        return self.store.list_telegram_recipients(only_active=only_active)
+
+    def list_notification_outbox(
+        self,
+        *,
+        status: NotificationDeliveryStatus | None = None,
+        channel: NotificationChannel | None = None,
+        ready_only: bool = False,
+        limit: int = 100,
+    ) -> list[NotificationOutboxEntry]:
+        return self.store.list_notification_outbox(
+            status=status,
+            channel=channel,
+            ready_only=ready_only,
+            limit=limit,
+        )
+
+    def update_notification_outbox_entry(
+        self,
+        entry: NotificationOutboxEntry,
+    ) -> NotificationOutboxEntry:
+        return self.store.update_notification_outbox_entry(entry)
 
     def load_rule_states(self, task_id: str) -> dict[str, RuleState]:
         """读取任务当前运行态。"""
@@ -229,12 +308,25 @@ class TaskService:
         task_status: TaskStatus | None = None,
     ) -> ManagedTask:
         """以单事务方式落库运行时相关变更，并同步内存注册表。"""
-        self.get_task(task_id)
+        task = self.get_task(task_id)
+        next_status = task.status if task_status is None else task_status
         updated = self.store.persist_task_runtime_changes(
             task_id,
             states=states,
             records=records,
             attempts=attempts,
+            notifications=(
+                self._build_record_notifications(task=task, records=records)
+                + self._build_task_lifecycle_notifications(
+                    task_id=task.task_id,
+                    token_id=task.token_id,
+                    title=task.title,
+                    status=next_status,
+                    action=f"status:{next_status.value}",
+                )
+                if task_status is not None and task_status is not task.status
+                else self._build_record_notifications(task=task, records=records)
+            ),
             task_status=task_status,
         )
         if updated.status is TaskStatus.ACTIVE:
@@ -273,3 +365,97 @@ class TaskService:
                 raise TaskConflictError(
                     f"token {token_id} already has an active task: {active_task.task_id}"
                 )
+
+    def _notification_recipients(self) -> tuple[TelegramRecipient, ...]:
+        return tuple(self.store.list_telegram_recipients(only_active=True))
+
+    def _build_task_lifecycle_notifications(
+        self,
+        *,
+        task_id: str,
+        token_id: str,
+        title: str | None,
+        status: TaskStatus,
+        action: str,
+        body_lines: tuple[str, ...] = (),
+    ) -> tuple[NotificationOutboxEntry, ...]:
+        recipients = self._notification_recipients()
+        if not recipients:
+            return ()
+        market_label = title or token_id
+        message_lines = (
+            market_label,
+            f"task_id: {task_id}",
+            f"token_id: {token_id}",
+            f"status: {status.value}",
+            *body_lines,
+        )
+        body = "\n".join(line for line in message_lines if line)
+        dedupe_suffix = utc_now().isoformat()
+        return tuple(
+            NotificationOutboxEntry.create(
+                channel=NotificationChannel.TELEGRAM,
+                recipient_id=recipient.recipient_id,
+                dedupe_key=f"task:{task_id}:{action}:{dedupe_suffix}",
+                category="task-lifecycle",
+                title=f"Task {action}",
+                body=body,
+                task_id=task_id,
+                payload={
+                    "task_id": task_id,
+                    "token_id": token_id,
+                    "status": status.value,
+                    "action": action,
+                },
+            )
+            for recipient in recipients
+        )
+
+    def _build_record_notifications(
+        self,
+        *,
+        task: ManagedTask,
+        records: tuple[ExecutionRecord, ...],
+    ) -> tuple[NotificationOutboxEntry, ...]:
+        recipients = self._notification_recipients()
+        if not recipients or not records:
+            return ()
+        market_label = task.title or task.token_id
+        entries: list[NotificationOutboxEntry] = []
+        for record in records:
+            body_lines = [
+                market_label,
+                f"task_id: {task.task_id}",
+                f"event_type: {record.event_type}",
+                f"rule: {record.rule_name}",
+                f"status: {record.status}",
+            ]
+            if record.order_id:
+                body_lines.append(f"order_id: {record.order_id}")
+            if record.requested_size > 0:
+                body_lines.append(f"requested_size: {record.requested_size}")
+            if record.filled_size > 0:
+                body_lines.append(f"filled_size: {record.filled_size}")
+            if record.message:
+                body_lines.append(f"message: {record.message}")
+            body = "\n".join(body_lines)
+            for recipient in recipients:
+                entries.append(
+                    NotificationOutboxEntry.create(
+                        channel=NotificationChannel.TELEGRAM,
+                        recipient_id=recipient.recipient_id,
+                        dedupe_key=f"record:{record.record_id}",
+                        category=f"record:{record.event_type}",
+                        title=f"{record.event_type} {record.status}",
+                        body=body,
+                        task_id=task.task_id,
+                        record_id=record.record_id,
+                        payload={
+                            "task_id": task.task_id,
+                            "record_id": record.record_id,
+                            "event_type": record.event_type,
+                            "status": record.status,
+                        },
+                    )
+                )
+        return tuple(entries)

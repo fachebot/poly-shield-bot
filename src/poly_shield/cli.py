@@ -170,9 +170,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--value", help="直接传入私钥；不传则走安全输入")
     secrets_set_parser.set_defaults(handler=handle_secrets_set_private_key)
 
+    secrets_set_telegram_parser = secrets_subparsers.add_parser(
+        "set-telegram-bot-token", help="将 Telegram bot token 写入本地加密仓库")
+    secrets_set_telegram_parser.add_argument(
+        "--value", help="直接传入 Telegram bot token；不传则走安全输入")
+    secrets_set_telegram_parser.set_defaults(
+        handler=handle_secrets_set_telegram_bot_token)
+
     secrets_clear_parser = secrets_subparsers.add_parser(
         "clear-private-key", help="清除本地加密仓库中的私钥")
     secrets_clear_parser.set_defaults(handler=handle_secrets_clear_private_key)
+
+    secrets_clear_telegram_parser = secrets_subparsers.add_parser(
+        "clear-telegram-bot-token", help="清除本地加密仓库中的 Telegram bot token")
+    secrets_clear_telegram_parser.set_defaults(
+        handler=handle_secrets_clear_telegram_bot_token)
 
     return parser
 
@@ -475,6 +487,7 @@ def handle_secrets_status(_: argparse.Namespace) -> int:
         "path": str(store.path),
         "backend": store.backend,
         "has_private_key": store.has_private_key(),
+        "has_telegram_bot_token": store.has_telegram_bot_token(),
     }, indent=2))
     return 0
 
@@ -509,6 +522,29 @@ def handle_secrets_clear_private_key(_: argparse.Namespace) -> int:
     """清除本地密文仓库中的私钥。"""
     store = LocalSecretStore.default()
     cleared = store.clear_private_key()
+    print(json.dumps({
+        "status": "cleared" if cleared else "empty",
+        "path": str(store.path),
+    }, indent=2))
+    return 0
+
+
+def handle_secrets_set_telegram_bot_token(args: argparse.Namespace) -> int:
+    """把 Telegram bot token 写入本地加密仓库。"""
+    token = args.value or getpass.getpass("Telegram bot token: ")
+    store = LocalSecretStore.default()
+    path = store.save_telegram_bot_token(token)
+    print(json.dumps({
+        "status": "saved",
+        "path": str(path),
+    }, indent=2))
+    return 0
+
+
+def handle_secrets_clear_telegram_bot_token(_: argparse.Namespace) -> int:
+    """清除本地密文仓库中的 Telegram bot token。"""
+    store = LocalSecretStore.default()
+    cleared = store.clear_telegram_bot_token()
     print(json.dumps({
         "status": "cleared" if cleared else "empty",
         "path": str(store.path),

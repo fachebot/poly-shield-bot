@@ -27,6 +27,29 @@ def test_local_secret_store_round_trip_uses_dpapi_backend(tmp_path, monkeypatch)
     assert payload["private_key"]["scheme"] == "dpapi"
 
 
+def test_local_secret_store_round_trip_telegram_token_uses_dpapi_backend(tmp_path, monkeypatch) -> None:
+    store = LocalSecretStore(tmp_path / "secrets.json")
+
+    monkeypatch.setattr("poly_shield.secret_store._is_windows", lambda: True)
+    monkeypatch.setattr(
+        "poly_shield.secret_store._protect_bytes_for_current_user",
+        lambda raw: b"protected:" + raw,
+    )
+    monkeypatch.setattr(
+        "poly_shield.secret_store._unprotect_bytes_for_current_user",
+        lambda raw: raw.removeprefix(b"protected:"),
+    )
+
+    path = store.save_telegram_bot_token("123:bot-token")
+
+    assert path.exists()
+    assert store.load_telegram_bot_token() == "123:bot-token"
+    assert store.has_telegram_bot_token() is True
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["telegram_bot_token"]["scheme"] == "dpapi"
+
+
 def test_local_secret_store_clear_private_key_removes_file(tmp_path, monkeypatch) -> None:
     store = LocalSecretStore(tmp_path / "secrets.json")
 
@@ -41,6 +64,29 @@ def test_local_secret_store_clear_private_key_removes_file(tmp_path, monkeypatch
     assert store.clear_private_key() is True
     assert not store.path.exists()
     assert store.has_private_key() is False
+
+
+def test_local_secret_store_clear_telegram_token_keeps_other_secrets(tmp_path, monkeypatch) -> None:
+    store = LocalSecretStore(tmp_path / "secrets.json")
+
+    monkeypatch.setattr("poly_shield.secret_store._is_windows", lambda: True)
+    monkeypatch.setattr(
+        "poly_shield.secret_store._protect_bytes_for_current_user",
+        lambda raw: raw,
+    )
+    monkeypatch.setattr(
+        "poly_shield.secret_store._unprotect_bytes_for_current_user",
+        lambda raw: raw,
+    )
+
+    store.save_private_key("0xdef456")
+    store.save_telegram_bot_token("123:bot-token")
+
+    assert store.clear_telegram_bot_token() is True
+    assert store.has_private_key() is True
+    assert store.has_telegram_bot_token() is False
+    assert store.load_private_key() == "0xdef456"
+    assert store.path.exists() is True
 
 
 def test_credentials_from_env_falls_back_to_local_secret_store(monkeypatch) -> None:
@@ -152,6 +198,39 @@ def test_local_secret_store_round_trip_uses_keyring_backend(tmp_path, monkeypatc
     assert payload["private_key"]["scheme"] == "keyring"
 
 
+def test_local_secret_store_round_trip_telegram_token_uses_keyring_backend(tmp_path, monkeypatch) -> None:
+    store = LocalSecretStore(tmp_path / "secrets.json")
+    state: dict[tuple[str, str], str] = {}
+    monkeypatch.setenv("POLY_SECRET_STORE_BACKEND", "keyring")
+
+    class FakeKeyring:
+        @staticmethod
+        def get_password(service: str, entry: str):
+            return state.get((service, entry))
+
+        @staticmethod
+        def set_password(service: str, entry: str, value: str) -> None:
+            state[(service, entry)] = value
+
+        @staticmethod
+        def delete_password(service: str, entry: str) -> None:
+            state.pop((service, entry), None)
+
+    monkeypatch.setattr("poly_shield.secret_store._is_windows", lambda: False)
+    monkeypatch.setattr("poly_shield.secret_store._is_linux", lambda: True)
+    monkeypatch.setattr(
+        "poly_shield.secret_store._keyring_module", lambda: FakeKeyring)
+
+    path = store.save_telegram_bot_token("123:bot-token")
+
+    assert path.exists()
+    assert store.load_telegram_bot_token() == "123:bot-token"
+    assert store.has_telegram_bot_token() is True
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["telegram_bot_token"]["scheme"] == "keyring"
+
+
 def test_local_secret_store_clear_private_key_keyring_backend(tmp_path, monkeypatch) -> None:
     store = LocalSecretStore(tmp_path / "secrets.json")
     state: dict[tuple[str, str], str] = {}
@@ -182,6 +261,36 @@ def test_local_secret_store_clear_private_key_keyring_backend(tmp_path, monkeypa
     assert store.path.exists() is False
 
 
+def test_local_secret_store_clear_telegram_token_keyring_backend(tmp_path, monkeypatch) -> None:
+    store = LocalSecretStore(tmp_path / "secrets.json")
+    state: dict[tuple[str, str], str] = {}
+    monkeypatch.setenv("POLY_SECRET_STORE_BACKEND", "keyring")
+
+    class FakeKeyring:
+        @staticmethod
+        def get_password(service: str, entry: str):
+            return state.get((service, entry))
+
+        @staticmethod
+        def set_password(service: str, entry: str, value: str) -> None:
+            state[(service, entry)] = value
+
+        @staticmethod
+        def delete_password(service: str, entry: str) -> None:
+            state.pop((service, entry), None)
+
+    monkeypatch.setattr("poly_shield.secret_store._is_windows", lambda: False)
+    monkeypatch.setattr("poly_shield.secret_store._is_linux", lambda: True)
+    monkeypatch.setattr(
+        "poly_shield.secret_store._keyring_module", lambda: FakeKeyring)
+
+    store.save_telegram_bot_token("123:bot-token")
+
+    assert store.clear_telegram_bot_token() is True
+    assert store.has_telegram_bot_token() is False
+    assert store.path.exists() is False
+
+
 def test_local_secret_store_uses_tpm2_backend_by_default_on_linux(monkeypatch, tmp_path) -> None:
     store = LocalSecretStore(tmp_path / "secrets.json")
     monkeypatch.delenv("POLY_SECRET_STORE_BACKEND", raising=False)
@@ -199,28 +308,27 @@ def test_local_secret_store_routes_to_tpm2_backend(monkeypatch, tmp_path) -> Non
     monkeypatch.setattr("poly_shield.secret_store._is_windows", lambda: False)
     monkeypatch.setattr("poly_shield.secret_store._is_linux", lambda: True)
 
-    def fake_save(self, private_key: str):
-        called["save"] = private_key
+    def fake_save(self, secret_name: str, value: str):
+        called["save"] = (secret_name, value)
         return self.path
 
-    def fake_load(self):
-        called["load"] = True
+    def fake_load(self, secret_name: str):
+        called["load"] = secret_name
         return "0xtpm2"
 
-    def fake_clear(self):
-        called["clear"] = True
+    def fake_clear(self, secret_name: str):
+        called["clear"] = secret_name
         return True
 
-    monkeypatch.setattr(LocalSecretStore, "_save_private_key_tpm2", fake_save)
-    monkeypatch.setattr(LocalSecretStore, "_load_private_key_tpm2", fake_load)
-    monkeypatch.setattr(
-        LocalSecretStore, "_clear_private_key_tpm2", fake_clear)
+    monkeypatch.setattr(LocalSecretStore, "_save_secret_tpm2", fake_save)
+    monkeypatch.setattr(LocalSecretStore, "_load_secret_tpm2", fake_load)
+    monkeypatch.setattr(LocalSecretStore, "_clear_secret_tpm2", fake_clear)
 
     assert store.save_private_key("0xabc") == store.path
     assert store.load_private_key() == "0xtpm2"
     assert store.clear_private_key() is True
     assert called == {
-        "save": "0xabc",
-        "load": True,
-        "clear": True,
+        "save": ("private_key", "0xabc"),
+        "load": "private_key",
+        "clear": "private_key",
     }

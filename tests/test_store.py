@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from poly_shield.backend.models import ExecutionAttempt, ExecutionAttemptStatus, ExecutionRecord, TaskStatus
+from poly_shield.backend.models import ExecutionAttempt, ExecutionAttemptStatus, ExecutionRecord, NotificationChannel, NotificationDeliveryStatus, NotificationOutboxEntry, TaskStatus
 from poly_shield.backend.store import SQLiteTaskStore
 from poly_shield.rules import ExitRule, RuleKind, RuleState
 
@@ -11,8 +11,10 @@ def test_sqlite_store_round_trips_task_definition(tmp_path) -> None:
     created = store.create_task(
         token_id="token-1",
         rules=(
-            ExitRule(kind=RuleKind.PRICE_STOP, sell_size=Decimal("50"), trigger_price=Decimal("0.40")),
-            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("25"), trigger_price=Decimal("0.65"), label="tp-1"),
+            ExitRule(kind=RuleKind.PRICE_STOP, sell_size=Decimal(
+                "50"), trigger_price=Decimal("0.40")),
+            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal(
+                "25"), trigger_price=Decimal("0.65"), label="tp-1"),
         ),
         dry_run=True,
         slippage_bps=Decimal("50"),
@@ -39,7 +41,8 @@ def test_sqlite_store_round_trips_rule_states(tmp_path) -> None:
         token_id="token-2",
         rules=(
             ExitRule(kind=RuleKind.BREAKEVEN_STOP, sell_size=Decimal("50")),
-            ExitRule(kind=RuleKind.TRAILING_TAKE_PROFIT, sell_size=Decimal("25"), drawdown_ratio=Decimal("0.1")),
+            ExitRule(kind=RuleKind.TRAILING_TAKE_PROFIT,
+                     sell_size=Decimal("25"), drawdown_ratio=Decimal("0.1")),
         ),
         dry_run=False,
         slippage_bps=Decimal("75"),
@@ -72,7 +75,8 @@ def test_sqlite_store_tracks_status_changes_and_execution_records(tmp_path) -> N
     task = store.create_task(
         token_id="token-3",
         rules=(
-            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("25"), trigger_price=Decimal("0.70")),
+            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal(
+                "25"), trigger_price=Decimal("0.70")),
         ),
         dry_run=False,
         slippage_bps=Decimal("25"),
@@ -107,7 +111,8 @@ def test_sqlite_store_round_trips_execution_attempts_and_runtime_lease(tmp_path)
     task = store.create_task(
         token_id="token-4",
         rules=(
-            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal("25"), trigger_price=Decimal("0.70")),
+            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal(
+                "25"), trigger_price=Decimal("0.70")),
         ),
         dry_run=False,
         slippage_bps=Decimal("25"),
@@ -143,3 +148,88 @@ def test_sqlite_store_round_trips_execution_attempts_and_runtime_lease(tmp_path)
     assert lease is not None
     assert lease.owner_id == "owner-1"
     assert duplicate is None
+
+
+def test_sqlite_store_round_trips_telegram_recipients_and_notification_outbox(tmp_path) -> None:
+    store = SQLiteTaskStore(tmp_path / "poly-shield.db")
+
+    created = store.upsert_telegram_recipient(
+        telegram_user_id=101,
+        chat_id=101,
+        chat_type="private",
+    )
+    updated = store.upsert_telegram_recipient(
+        telegram_user_id=101,
+        chat_id=202,
+        chat_type="private",
+    )
+    entry = NotificationOutboxEntry.create(
+        channel=NotificationChannel.TELEGRAM,
+        recipient_id=updated.recipient_id,
+        dedupe_key="task:task-1:paused",
+        category="task-status",
+        title="Task paused",
+        body="task task-1 paused automatically",
+        payload={"task_id": "task-1", "status": "paused"},
+    )
+
+    store.enqueue_notification_outbox((entry, entry))
+    recipients = store.list_telegram_recipients()
+    pending = store.list_notification_outbox(
+        status=NotificationDeliveryStatus.PENDING,
+        channel=NotificationChannel.TELEGRAM,
+        ready_only=True,
+    )
+    delivered = pending[0].mark_delivered()
+    store.update_notification_outbox_entry(delivered)
+    sent = store.list_notification_outbox(
+        status=NotificationDeliveryStatus.DELIVERED,
+        channel=NotificationChannel.TELEGRAM,
+    )
+
+    assert created.recipient_id == updated.recipient_id
+    assert recipients[0].chat_id == 202
+    assert len(pending) == 1
+    assert sent[0].notification_id == entry.notification_id
+    assert sent[0].attempt_count == 1
+
+
+def test_sqlite_store_persists_notifications_with_runtime_changes(tmp_path) -> None:
+    store = SQLiteTaskStore(tmp_path / "poly-shield.db")
+    recipient = store.upsert_telegram_recipient(
+        telegram_user_id=303,
+        chat_id=303,
+    )
+    task = store.create_task(
+        token_id="token-5",
+        rules=(
+            ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal(
+                "25"), trigger_price=Decimal("0.70")),
+        ),
+        dry_run=False,
+        slippage_bps=Decimal("25"),
+    )
+    notification = NotificationOutboxEntry.create(
+        channel=NotificationChannel.TELEGRAM,
+        recipient_id=recipient.recipient_id,
+        dedupe_key=f"task:{task.task_id}:paused",
+        category="task-status",
+        title="Task paused",
+        body="task paused for review",
+        task_id=task.task_id,
+    )
+
+    updated = store.persist_task_runtime_changes(
+        task.task_id,
+        task_status=TaskStatus.PAUSED,
+        notifications=(notification,),
+    )
+    pending = store.list_notification_outbox(
+        status=NotificationDeliveryStatus.PENDING,
+        channel=NotificationChannel.TELEGRAM,
+        ready_only=True,
+    )
+
+    assert updated.status is TaskStatus.PAUSED
+    assert pending[0].notification_id == notification.notification_id
+    assert pending[0].task_id == task.task_id

@@ -1,5 +1,6 @@
 import os
 
+from poly_shield.backend.telegram_bot import TelegramHttpTransport
 from poly_shield.config import PolymarketCredentials
 from poly_shield.polymarket import PolymarketGateway
 
@@ -98,3 +99,28 @@ def test_gateway_skips_sdk_http_client_rebuild_without_proxy_config() -> None:
     gateway._configure_sdk_http_proxy(FakeBundle)
 
     assert isinstance(FakeHttpHelpers._http_client, ExistingClient)
+
+
+def test_telegram_transport_applies_project_proxy_environment(monkeypatch) -> None:
+    monkeypatch.delenv("POLY_HTTP_PROXY", raising=False)
+    monkeypatch.delenv("POLY_HTTPS_PROXY", raising=False)
+    monkeypatch.delenv("POLY_NO_PROXY", raising=False)
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    monkeypatch.delenv("http_proxy", raising=False)
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    monkeypatch.delenv("https_proxy", raising=False)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+
+    monkeypatch.setenv("POLY_HTTP_PROXY", "http://127.0.0.1:7890")
+    monkeypatch.setenv("POLY_HTTPS_PROXY", "http://127.0.0.1:7890")
+    monkeypatch.setenv("POLY_NO_PROXY", "localhost,127.0.0.1")
+
+    TelegramHttpTransport("test-token")
+
+    assert os.environ["HTTP_PROXY"] == "http://127.0.0.1:7890"
+    assert os.environ["http_proxy"] == "http://127.0.0.1:7890"
+    assert os.environ["HTTPS_PROXY"] == "http://127.0.0.1:7890"
+    assert os.environ["https_proxy"] == "http://127.0.0.1:7890"
+    assert os.environ["NO_PROXY"] == "localhost,127.0.0.1"
+    assert os.environ["no_proxy"] == "localhost,127.0.0.1"

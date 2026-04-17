@@ -13,6 +13,8 @@ from poly_shield.backend.api import create_app
 from poly_shield.backend.runtime import build_default_runtime
 from poly_shield.backend.security import LocalAccessSecuritySettings
 from poly_shield.backend.service import DEFAULT_DB_PATH, TaskService
+from poly_shield.backend.telegram_bot import TelegramBotController, TelegramHttpTransport
+from poly_shield.secret_store import LocalSecretStore
 from poly_shield.wallet_identity import inspect_effective_signer, validate_signer_configuration
 
 
@@ -86,15 +88,42 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     service = TaskService.from_db_path(Path(args.db_path))
     runtime = build_default_runtime(service)
+    env_security_settings = LocalAccessSecuritySettings.from_env()
+    security_settings = LocalAccessSecuritySettings(
+        ui_username=args.ui_username,
+        ui_password=(args.ui_password.strip()
+                     if args.ui_password and args.ui_password.strip() else None),
+        enforce_origin_check=env_security_settings.enforce_origin_check,
+        csrf_cookie_name=env_security_settings.csrf_cookie_name,
+        csrf_header_name=env_security_settings.csrf_header_name,
+        telegram_enabled=env_security_settings.telegram_enabled,
+        telegram_allowed_user_ids=env_security_settings.telegram_allowed_user_ids,
+        telegram_poll_interval_seconds=env_security_settings.telegram_poll_interval_seconds,
+    )
+    telegram_bot = None
+    if security_settings.telegram_enabled:
+        if not security_settings.telegram_whitelist_enabled:
+            print(
+                "Startup aborted because Telegram is enabled but POLY_TELEGRAM_ALLOWED_USER_IDS is empty.")
+            return 1
+        telegram_token = LocalSecretStore.default().load_telegram_bot_token()
+        if not telegram_token:
+            print(
+                "Startup aborted because Telegram is enabled but no Telegram bot token is stored locally.")
+            return 1
+        telegram_bot = TelegramBotController(
+            service=service,
+            settings=security_settings,
+            transport=TelegramHttpTransport(telegram_token),
+            runtime_snapshot_provider=runtime.snapshot,
+            refresh_runtime=runtime.refresh_active_tasks,
+            notification_batch_size=50,
+        )
     app = create_app(
         service,
         runtime=runtime,
-        security_settings=LocalAccessSecuritySettings(
-            ui_username=args.ui_username,
-            ui_password=(args.ui_password.strip()
-                         if args.ui_password and args.ui_password.strip() else None),
-            enforce_origin_check=True,
-        ),
+        security_settings=security_settings,
+        telegram_bot=telegram_bot,
     )
     uvicorn.run(app, host=args.host, port=args.port)
     return 0

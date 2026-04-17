@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from poly_shield.backend.models import ExecutionAttempt, ExecutionAttemptStatus, ExecutionRecord, TaskStatus
+from poly_shield.backend.models import ExecutionAttempt, ExecutionAttemptStatus, ExecutionRecord, NotificationChannel, NotificationDeliveryStatus, TaskStatus
 from poly_shield.backend.service import RuntimeLeaseConflictError, TaskConflictError, TaskService
 from poly_shield.rules import ExitRule, RuleKind
 
@@ -52,6 +52,7 @@ def test_task_service_rejects_duplicate_active_token(tmp_path) -> None:
 
 def test_task_service_pause_resume_and_record_append(tmp_path) -> None:
     service = TaskService.from_db_path(tmp_path / "poly-shield.db")
+    service.register_telegram_recipient(telegram_user_id=101, chat_id=101)
     task = service.create_task(
         token_id="token-3",
         rules=(ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal(
@@ -78,15 +79,24 @@ def test_task_service_pause_resume_and_record_append(tmp_path) -> None:
     )
 
     records = service.list_execution_records(task_id=task.task_id)
+    notifications = service.list_notification_outbox(
+        status=NotificationDeliveryStatus.PENDING,
+        channel=NotificationChannel.TELEGRAM,
+        ready_only=True,
+        limit=20,
+    )
 
     assert paused.status is TaskStatus.PAUSED
     assert resumed.status is TaskStatus.ACTIVE
     assert len(records) == 1
     assert records[0].status == "matched"
+    assert any(entry.category == "task-lifecycle" for entry in notifications)
+    assert any(entry.category == "record:rule" for entry in notifications)
 
 
 def test_task_service_runtime_changes_and_lease(tmp_path) -> None:
     service = TaskService.from_db_path(tmp_path / "poly-shield.db")
+    service.register_telegram_recipient(telegram_user_id=202, chat_id=202)
     task = service.create_task(
         token_id="token-4",
         rules=(ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal(
@@ -123,11 +133,50 @@ def test_task_service_runtime_changes_and_lease(tmp_path) -> None:
         task_status=TaskStatus.PAUSED,
     )
     lease = service.acquire_runtime_lease("backend-runtime", "owner-1", 15)
+    notifications = service.list_notification_outbox(
+        status=NotificationDeliveryStatus.PENDING,
+        channel=NotificationChannel.TELEGRAM,
+        ready_only=True,
+        limit=20,
+    )
 
     assert updated.status is TaskStatus.PAUSED
     assert service.get_latest_execution_attempt_by_order_id("missing") is None
     assert lease.owner_id == "owner-1"
+    assert any(entry.category == "record:system" for entry in notifications)
+    assert any("status: paused" in entry.body for entry in notifications)
 
     another_service = TaskService.from_db_path(tmp_path / "poly-shield.db")
     with pytest.raises(RuntimeLeaseConflictError, match="existing Poly Shield runtime may still be running or the previous lease has not expired yet"):
         another_service.acquire_runtime_lease("backend-runtime", "owner-2", 15)
+
+
+def test_task_service_create_and_update_publish_lifecycle_notifications(tmp_path) -> None:
+    service = TaskService.from_db_path(tmp_path / "poly-shield.db")
+    service.register_telegram_recipient(telegram_user_id=303, chat_id=303)
+
+    created = service.create_task(
+        token_id="token-5",
+        rules=(ExitRule(kind=RuleKind.BREAKEVEN_STOP, sell_size=Decimal("50")),),
+        dry_run=True,
+        slippage_bps=Decimal("50"),
+        status=TaskStatus.PAUSED,
+        title="Will it ship?",
+    )
+    updated = service.update_task(
+        created.task_id,
+        rules=(ExitRule(kind=RuleKind.TAKE_PROFIT, sell_size=Decimal(
+            "25"), trigger_price=Decimal("0.80")),),
+        dry_run=False,
+        slippage_bps=Decimal("25"),
+    )
+    notifications = service.list_notification_outbox(
+        status=NotificationDeliveryStatus.PENDING,
+        channel=NotificationChannel.TELEGRAM,
+        ready_only=True,
+        limit=20,
+    )
+
+    assert updated.dry_run is False
+    assert any(entry.title == "Task created" for entry in notifications)
+    assert any(entry.title == "Task updated" for entry in notifications)
