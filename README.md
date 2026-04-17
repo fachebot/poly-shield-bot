@@ -25,12 +25,17 @@ Polymarket 自动止盈止损机器人。
 - crash-safe 执行意图：真实下单前会先把 execution attempt 落成 prepared，再推进到 submitted / confirmed / failed；如果进程在中间异常退出，运行时重启后会把未完成 attempt 标成 needs-review，并自动暂停对应任务，避免“远端可能下单了，本地却没痕迹”。
 - 单实例运行时保护：后端 runtime 启动时会抢占 SQLite 里的 lease，同一时刻只允许一个 runtime 持有 active 任务执行权，避免双实例重复消费同一批任务。
 - 陈旧数据自动降级：如果 market websocket 或 user websocket 长时间没有新消息，运行时会把相关 active 任务自动暂停，并写入一条 system 类型记录，避免在陈旧行情或陈旧订单状态上继续执行。
+- Web 控制台：已提供 HTMX + FastAPI 的任务面板，可在浏览器中查看持仓、任务板、任务详情与执行时间线。
+- 持仓分组视图：左侧支持 `仓位` / `存档仓位` 双 tab；当 token 在实时持仓里为 0 但仍有历史任务时自动归档。
+- 存档只读语义：存档仓位不允许新建/编辑任务；如果用户重新建仓，token 会自动回到 `仓位` tab。
+- 时间线按需加载：任务详情执行时间线和系统事件支持下拉展开、分页懒加载和滚动自动加载更多，避免一次性拉全量记录。
+- 存档与系统事件可观测性：staleness 触发的自动暂停会写入 `system` 事件，并在任务详情中展示。
 
 ## 当前限制
 
 - 当前环境下直接访问官方 `https://data-api.polymarket.com/positions` 会命中 `403 / error code: 1010`，更像是 Cloudflare/地理限制，不是本地解析代码错误。
 - 因为上面的限制，我已经把官方 positions 接口接进代码和测试，但没法在这个环境里完成真实在线验证。
-- Telegram Bot、多用户权限系统还没开始做；当前仓库不再内置网页前端。
+- Telegram Bot、多用户权限系统还没开始做；当前 Web 控制台以单用户本地运维为主。
 - 用户 websocket 需要服务端可用的 API key/secret/passphrase；如果本地没有可用交易凭证，这条链路无法在线建立连接。
 - 真实卖单路径已经接上 py-clob-client，但还没做真实账户的小仓位联调。
 
@@ -86,6 +91,12 @@ poetry run poly-shield --help
 
 ```bash
 poetry run poly-shield serve
+```
+
+启动后可直接打开 Web 控制台：
+
+```text
+http://127.0.0.1:8787/
 ```
 
 通过后端 API 创建任务：
@@ -219,6 +230,8 @@ poetry run poly-shield watch \
 - stale_seconds.max：当前所有有效 stale 秒数里的最大值；如果 market 和 user 两边都没有相关上下文，就是 null。
 
 默认阈值下，market stale 超过 15 秒、user stale 超过 30 秒时，runtime 会把受影响任务自动切到 paused，并在 records 里补一条 system 记录说明暂停原因。后续你可以先查 records，再决定是人工恢复、继续观测，还是直接删除任务。
+
+补充说明：market 流的心跳回包（PONG）也会更新运行时 freshness，因此“市场本身不活跃但 websocket 仍存活”的场景不会再被误判成 market stale。
 
 ## 开发校验
 
